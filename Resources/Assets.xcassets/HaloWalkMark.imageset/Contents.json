@@ -1,0 +1,8 @@
+{
+  "images": [
+    { "filename": "HaloWalkMark.png",    "idiom": "universal", "scale": "1x" },
+    { "filename": "HaloWalkMark@2x.png", "idiom": "universal", "scale": "2x" },
+    { "filename": "HaloWalkMark@3x.png", "idiom": "universal", "scale": "3x" }
+  ],
+  "info": { "author": "xcode", "version": 1 }
+}

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>HaloWalk</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>HaloWalk uses location to show your halo and route home.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Kalam-Light.ttf</string>
+		<string>Kalam-Regular.ttf</string>
+		<string>Kalam-Bold.ttf</string>
+		<string>Caveat-Regular.ttf</string>
+		<string>Caveat-Bold.ttf</string>
+		<string>ArchitectsDaughter-Regular.ttf</string>
+		<string>PatrickHand-Regular.ttf</string>
+		<string>Quicksand-VF.ttf</string>
+		<string>Inter-VF.ttf</string>
+		<string>FredokaOne-Regular.ttf</string>
+		<string>Nunito-VF.ttf</string>
+	</array>
+	<key>WKApplication</key>
+	<true/>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>com.halowalk.guardian</string>
+	<key>WKWatchOnly</key>
+	<false/>
+</dict>
+</plist>

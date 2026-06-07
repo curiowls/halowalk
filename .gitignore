@@ -1,0 +1,30 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj
+*.xcuserstate
+xcuserdata/
+*.xcworkspace
+!default.xcworkspace
+*.swp
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Local assistant/tool state
+.claude/
+
+# Generated
+HaloWalk.xcodeproj
+
+# Fonts (downloaded by Scripts/fetch-fonts.sh; you can choose to commit these
+# instead by removing the next line — they're under the SIL Open Font License)
+Resources/Fonts/*.ttf
+
+# Secrets — App Store Connect API key, never commit
+*.p8
+AuthKey_*.p8
+build/
+*.xcarchive
+.archive/
