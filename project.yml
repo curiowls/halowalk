@@ -10,7 +10,7 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "35"
     ENABLE_PREVIEWS: YES
 
@@ -26,6 +26,8 @@ targets:
       path: Guardian/Info.plist
       properties:
         CFBundleDisplayName: HaloWalk
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen:
           UIColorName: ""
@@ -90,6 +92,8 @@ targets:
       path: Watcher/Info.plist
       properties:
         CFBundleDisplayName: HaloWalk
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         ITSAppUsesNonExemptEncryption: false
         WKApplication: true
         WKWatchOnly: false
