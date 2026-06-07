@@ -34,6 +34,7 @@ targets:
           UIImageName: HaloWalkMark
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        CKSharingSupported: true
         # Required for region monitoring to fire while the app is backgrounded.
         UIBackgroundModes:
           - location

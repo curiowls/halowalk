@@ -1,6 +1,6 @@
 # HaloWalk CloudKit Sync Architecture
 
-**Status:** Build B shipped (owner-only solo sync). Build C adds CKShare / multi-participant.
+**Status:** Build C in progress: owner solo sync plus CKShare invite/accept for multi-participant families.
 **Owner:** anyone touching `HaloCloudSync`, `CloudKitSchema`, or the local stores' `upsertFromCloud` paths.
 
 Read this before changing the schema, the sync engine, or anything that mutates FamilyStore / HubStore / PresenceStore.
@@ -10,11 +10,11 @@ Read this before changing the schema, the sync engine, or anything that mutates 
 ## The model
 
 - **Container:** `iCloud.com.halowalk.guardian`
-- **Zone:** one custom zone `HaloFamily` per family, in the owner's **private database**.
+- **Zone:** one custom zone `HaloFamily` per family. Owners write it in their private database; accepted participants read/write the shared copy from `sharedCloudDatabase`.
 - **Engine:** `CKSyncEngine` (iOS 17+). It owns change tokens, batching, retry/backoff, offline queueing. We only supply (a) which record IDs changed and (b) how to merge what comes back.
 - **Cache:** UserDefaults stays the offline cache / first-paint. CloudKit is the source of truth when reachable.
-- **Build B scope:** owner-only. Data round-trips across the same iCloud account's devices and survives reinstall. No sharing yet.
-- **Build C scope:** `CKShare` on the `Family` root record; invite/accept (share sheet + QR); participant → Member mapping; relationship-direction picker.
+- **Build B scope:** owner-only. Data round-trips across the same iCloud account's devices and survives reinstall.
+- **Build C scope:** `CKShare` on the `Family` root record; invite/accept through Apple's CloudKit sharing UI; participant → Member setup; all guardians watch all watched/sharing members.
 
 ## Record types & keys
 
@@ -23,7 +23,7 @@ All records live in the `HaloFamily` zone. Record names are derived from model U
 | Type | Record name | Notes |
 |---|---|---|
 | `Family` | `family_<uuid>` | The CKShare root in Build C |
-| `Member` | `member_<uuid>` | carries `appleUserId` for Build C participant matching |
+| `Member` | `member_<uuid>` | carries `appleUserId` and `locationSharingEnabled` for participant matching/privacy |
 | `Relationship` | `rel_<uuid>` | the watch graph (one-way & two-way) |
 | `Device` | `device_<uuid>` | |
 | `Hub` | `hub_<uuid>` | |
@@ -52,7 +52,7 @@ Beyond that: `upsertFromCloud(...)` replaces the local record wholesale; for Loc
 
 CloudKit uses optimistic concurrency. Updating an existing server record requires sending a `CKRecord` that carries the server's current `recordChangeTag`. A freshly-built `CKRecord(recordType:recordID:)` has **no tag**: the first save (a create) succeeds, but every subsequent update is rejected with `serverRecordChanged` and the edit is silently lost. Real-world symptom we hit: "yesterday's avatar change stuck, today's didn't"; new hubs always worked because creates don't need a tag.
 
-`HaloCloudSync` keeps a `systemFields` cache (recordName → archived `CKRecord.encodeSystemFields`), persisted to `halowalk.cksync.systemFields.v1`:
+`HaloCloudSync` keeps a `systemFields` cache (zone + recordName → archived `CKRecord.encodeSystemFields`), persisted to `halowalk.cksync.systemFields.v2`:
 
 - **`materialize()`** starts from the cached record (carrying the tag) and copies current data fields onto it — never sends a virgin record for an existing object.
 - The cache is refreshed from every authoritative server record: on fetch (`fetchedRecordZoneChanges`, even for records we skip applying due to a pending local edit) and on every successful save (`sentRecordZoneChanges.savedRecords`).
@@ -65,12 +65,22 @@ If you ever refactor `CloudKitSchema.record(for:)` or `materialize`, preserve th
 `HaloCloudSync.shared.start()` is called from `HaloWalkApp.deferredActivations()` behind the `halowalk.safe.cloudSync` kill-switch (Privacy & permissions → Diagnostics), like every other heavy subsystem. It:
 
 1. checks `CKContainer.accountStatus()` — bails if iCloud unavailable
-2. boots the engine with the persisted state serialization
-3. enqueues a `saveZone` for `HaloFamily`
-4. wires the store observers
-5. pushes the entire local state up + fetches anything already in the cloud
+2. restores private-owner or shared-participant scope
+3. boots the engine with the persisted state serialization for that database scope
+4. enqueues a `saveZone` for `HaloFamily` only for private owners
+5. wires the store observers
+6. pushes the entire local state up + fetches anything already in the cloud
 
-State serialization (`CKSyncEngine.State.Serialization`, a `Codable`) is persisted to UserDefaults key `halowalk.cksync.state.v1` via the `.stateUpdate` event.
+State serialization (`CKSyncEngine.State.Serialization`, a `Codable`) is persisted separately for private and shared scopes via the `.stateUpdate` event.
+
+## Sharing flow
+
+1. The owner opens **Family members → Invite family member**.
+2. `UICloudSharingController` asks `HaloCloudSync` to create or fetch the family `CKShare`.
+3. The invited person accepts the CloudKit link. iOS launches HaloWalk through `CKSharingSupported` and `HaloWalkAppDelegate.application(_:userDidAcceptCloudKitShareWith:)`.
+4. HaloWalk accepts the share, persists the shared zone owner/name, restarts sync against `sharedCloudDatabase`, and shows the join setup screen.
+5. The participant signs in with Apple, chooses `Guardian`, `Watched member`, or `Both`, and explicitly chooses whether to share this iPhone's location.
+6. `FamilyStore` creates/claims the participant `Member`, adds device metadata, and adds missing all-guardian/all-watched relationships.
 
 ---
 
@@ -86,7 +96,7 @@ So a TestFlight build will hit Production CloudKit, and if the schema isn't in P
 ### One-time setup (and after any schema change)
 
 1. **Populate the Development schema.** Open `HaloWalk.xcodeproj` in Xcode, run the app once on a real device (Debug build → Development CloudKit). Sign into iCloud. Do something that writes data (the app pushes the whole local state on launch — a hub edit or avatar change is enough). This auto-infers all 6 record types + fields in Development.
-   - *Verify:* CloudKit Dashboard → HaloWalk container → Schema → you should see `Family`, `Member`, `Relationship`, `Device`, `Hub`, `LocationReading`.
+   - *Verify:* CloudKit Dashboard → HaloWalk container → Schema → you should see `Family`, `Member`, `Relationship`, `Device`, `Hub`, `LocationReading`; `Member` includes `appleUserId` and `locationSharingEnabled`.
 2. **Deploy to Production.** CloudKit Dashboard → **Deploy Schema Changes** → review → **Deploy**. This copies the Development schema to Production. ~30 seconds.
 3. **Now TestFlight works.** Subsequent TestFlight builds hit Production where the schema now exists.
 
@@ -100,7 +110,9 @@ You can hand-create the record types + fields in the CloudKit Dashboard schema e
 
 ---
 
-## Testing Build B (solo, no second device needed)
+## Testing Build C
+
+### Owner solo regression
 
 1. Run on device A (signed into iCloud). Add a hub / change your avatar.
 2. Wait ~10 s (engine auto-syncs).
@@ -110,12 +122,20 @@ You can hand-create the record types + fields in the CloudKit Dashboard schema e
 
 If nothing syncs: check **Privacy & permissions → Diagnostics → "CloudKit sync on launch"** is on, the device is signed into iCloud, and (for TestFlight) the schema was deployed to Production.
 
+### Multi-participant
+
+1. Prepare two iPhones with different Apple IDs and iCloud Drive enabled.
+2. Device A: run HaloWalk, complete onboarding, open **Family members → Invite family member**, and send the CloudKit invite.
+3. Device B: accept the invite link, open HaloWalk, complete join setup, and keep location sharing on.
+4. Verify both phones show the same members, hubs, and fresh pins.
+5. Device B: turn **Privacy & permissions → Share my location** off; verify B's pin disappears and its cloud readings are deleted.
+
 ---
 
 ## What's deferred
 
 - `Trigger`, `Corridor`, `Message`/`AppNotification` records — guardian-local config / separate fan-out milestone.
-- `CKShare` + multi-participant — Build C.
+- CloudKit iPhone-to-iPhone boost requests for fresher live tracking.
 - Field-level dirty tracking — pilot re-enqueues whole collections on change (≤ ~30 records/family, negligible; CKSyncEngine only uploads real diffs).
 - Watch CloudKit entitlement — watch syncs via WatchSync from the phone; it never talks to CloudKit directly.
 

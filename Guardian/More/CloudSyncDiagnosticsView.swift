@@ -87,6 +87,8 @@ struct CloudSyncDiagnosticsView: View {
 
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 6) {
+            row("Database scope", sync.databaseScope.label)
+            row("Active zone", sync.activeZoneDescription)
             row("iCloud account", sync.accountAvailable ? "available" : "UNAVAILABLE")
             row("Engine running", sync.isRunning ? "yes" : "no")
             row("Last sync", sync.lastSyncAt.map { rel($0) } ?? "never")

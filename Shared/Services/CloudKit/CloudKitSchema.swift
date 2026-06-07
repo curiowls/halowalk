@@ -14,8 +14,18 @@ enum CloudKitSchema {
     /// shared DB. The zone name is constant — a device belongs to exactly
     /// one HaloWalk family.
     static let zoneName = "HaloFamily"
-    static var zoneID: CKRecordZone.ID {
+    static var privateZoneID: CKRecordZone.ID {
         CKRecordZone.ID(zoneName: zoneName, ownerName: CKCurrentUserDefaultName)
+    }
+    static var activeZoneID: CKRecordZone.ID = privateZoneID
+    static var zoneID: CKRecordZone.ID { activeZoneID }
+
+    static func usePrivateZone() {
+        activeZoneID = privateZoneID
+    }
+
+    static func useSharedZone(_ zoneID: CKRecordZone.ID) {
+        activeZoneID = zoneID
     }
 
     enum RecordType {
@@ -34,6 +44,9 @@ enum CloudKitSchema {
     static func familyRecordID(_ id: UUID) -> CKRecord.ID {
         .init(recordName: "family_\(id.uuidString)", zoneID: zoneID)
     }
+    static func familyRecordID(_ id: UUID, zoneID: CKRecordZone.ID) -> CKRecord.ID {
+        .init(recordName: "family_\(id.uuidString)", zoneID: zoneID)
+    }
     static func memberRecordID(_ id: UUID) -> CKRecord.ID {
         .init(recordName: "member_\(id.uuidString)", zoneID: zoneID)
     }
@@ -48,6 +61,9 @@ enum CloudKitSchema {
     }
     static func readingRecordID(memberId: UUID, deviceId: UUID) -> CKRecord.ID {
         .init(recordName: "reading_\(memberId.uuidString)_\(deviceId.uuidString)", zoneID: zoneID)
+    }
+    static func shareRecordID(familyId: UUID, zoneID: CKRecordZone.ID = activeZoneID) -> CKRecord.ID {
+        .init(recordName: "share_\(familyId.uuidString)", zoneID: zoneID)
     }
 }
 
@@ -66,6 +82,8 @@ extension CloudKitSchema {
         r["pronouns"] = member.pronouns
         r["birthday"] = member.birthday
         r["preferredThemeId"] = member.preferredThemeId
+        r["appleUserId"] = member.appleUserId
+        r["locationSharingEnabled"] = member.sharesLocation ? 1 : 0
         return r
     }
     static func member(from r: CKRecord) -> Member? {
@@ -85,7 +103,9 @@ extension CloudKitSchema {
             accentColorHex: UInt32(truncatingIfNeeded: accent),
             avatarSystemImage: r["avatarSystemImage"] as? String,
             avatarId: r["avatarId"] as? String,
-            preferredThemeId: themeId
+            preferredThemeId: themeId,
+            appleUserId: r["appleUserId"] as? String,
+            locationSharingEnabled: (r["locationSharingEnabled"] as? Int64).map { $0 == 1 }
         )
     }
 }

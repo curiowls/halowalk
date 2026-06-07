@@ -5,6 +5,8 @@ import SwiftUI
 struct FamilyManagementView: View {
     @Environment(\.theme) var theme
     @EnvironmentObject var familyStore: FamilyStore
+    @ObservedObject private var cloudSync = HaloCloudSync.shared
+    @State private var showingShareSheet = false
 
     var body: some View {
         ScrollView {
@@ -39,8 +41,8 @@ struct FamilyManagementView: View {
                     }
                 }
 
-                Button {} label: {
-                    Text("+ Add a family member")
+                Button { showingShareSheet = true } label: {
+                    Label("Invite family member", systemImage: "person.badge.plus")
                         .font(theme.typography.font(.handFlow, size: 16))
                         .foregroundColor(theme.palette.ink2)
                         .padding(.vertical, 14)
@@ -48,6 +50,24 @@ struct FamilyManagementView: View {
                         .sketchBorder(dashed: true, padding: 8)
                 }
                 .buttonStyle(.plain)
+                .disabled(cloudSync.databaseScope != .privateOwner)
+
+                Button { showingShareSheet = true } label: {
+                    Label("Manage sharing", systemImage: "person.2.wave.2")
+                        .font(theme.typography.font(.handTight, size: 14, weight: .bold))
+                        .foregroundColor(theme.palette.ink)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity)
+                        .sketchBorder(padding: 0)
+                }
+                .buttonStyle(.plain)
+                .disabled(cloudSync.databaseScope != .privateOwner)
+
+                if cloudSync.databaseScope != .privateOwner {
+                    Text("This device joined as a shared participant. The family owner manages invites.")
+                        .font(theme.typography.font(.handFlow, size: 12))
+                        .foregroundColor(theme.palette.ink3)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -56,6 +76,9 @@ struct FamilyManagementView: View {
         .background(theme.palette.paper.ignoresSafeArea())
         .navigationTitle("Family members")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingShareSheet) {
+            CloudFamilySharingSheet()
+        }
     }
 }
 

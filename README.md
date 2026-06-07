@@ -118,13 +118,14 @@ inform the eventual default.
 
 ## Pilot caveats
 
-- All data is mocked (`Shared/Mock/MockData.swift`). Wire `LocationManager`,
-  `WatchConnectivity`, `UNUserNotificationCenter`, and a backend before pilot.
+- The app now has real local location reporting, WatchConnectivity, local
+  notifications, and CloudKit sync paths. `Shared/Mock/MockData.swift` is still
+  the bootstrap/demo family until a real family share is accepted.
 - Custom fonts gracefully fall back to system rounded if the .ttf files are
   missing — but for the heartwarming feel, run `Scripts/fetch-fonts.sh` first.
-- `WatchConnectivity` for iPhone↔Watch sync isn't wired yet — the
-  `ThemeManager` lives in each target's UserDefaults independently. Add a
-  WCSession transfer when connecting real backends.
-- The Guardian map shows a fictional San Francisco neighborhood for `.kit`
-  themes (see `MockData.realRegion`). Replace with the user's actual hub
-  coordinates when location is wired.
+- WatchConnectivity is wired for iPhone↔Watch family/app context, watch
+  location readings, quick replies, and fidelity boost requests. iPhone↔iPhone
+  boost requests remain a CloudKit backlog item.
+- CloudKit owner solo sync and Build C family sharing use the
+  `iCloud.com.halowalk.guardian` container. TestFlight requires Development
+  schema changes to be deployed to Production after any schema change.

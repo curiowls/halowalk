@@ -7,6 +7,21 @@ import Combine
 final class FamilyStore: ObservableObject {
     static let shared = FamilyStore()
 
+    enum JoinRole: String, Codable, CaseIterable, Identifiable {
+        case guardian
+        case watched
+        case both
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .guardian: return "Guardian"
+            case .watched: return "Watched member"
+            case .both: return "Both"
+            }
+        }
+    }
+
     @Published var family: Family
     @Published var members: [Member]
     @Published var relationships: [Relationship]
@@ -139,6 +154,10 @@ final class FamilyStore: ObservableObject {
         return member(id)?.displayName ?? "—"
     }
 
+    func member(matchingAppleUserId appleUserId: String) -> Member? {
+        members.first { $0.appleUserId == appleUserId }
+    }
+
     // MARK: - Role inference (from relationships, not stored on Member)
 
     /// Members this Member watches over (= they're a guardian to these).
@@ -198,6 +217,10 @@ final class FamilyStore: ObservableObject {
         }
         if let fullName, !fullName.isEmpty,
            let i = members.firstIndex(where: { $0.id == account.memberId }) {
+            members[i].appleUserId = userId
+            if members[i].locationSharingEnabled == nil {
+                members[i].locationSharingEnabled = true
+            }
             let current = members[i].name.trimmingCharacters(in: .whitespaces)
             let looksPlaceholder =
                 current.isEmpty ||
@@ -212,6 +235,103 @@ final class FamilyStore: ObservableObject {
             }
         }
         save()
+    }
+
+    func configureJoinedAccount(
+        appleUserId: String,
+        fullName: String?,
+        email: String?,
+        role: JoinRole,
+        sharesLocation: Bool
+    ) {
+        let memberId: UUID
+        if let existing = members.firstIndex(where: { $0.appleUserId == appleUserId }) {
+            memberId = members[existing].id
+            if let fullName, !fullName.isEmpty {
+                members[existing].name = fullName
+                members[existing].displayName = fullName
+                    .split(separator: " ").first.map(String.init) ?? fullName
+                members[existing].initial = String(fullName.prefix(1)).uppercased()
+            }
+            members[existing].locationSharingEnabled = sharesLocation
+        } else {
+            memberId = UUID()
+            let resolvedName = fullName?.isEmpty == false
+                ? fullName!
+                : email?.split(separator: "@").first.map(String.init) ?? "Family member"
+            let display = resolvedName.split(separator: " ").first.map(String.init) ?? resolvedName
+            let member = Member(
+                id: memberId,
+                name: resolvedName,
+                displayName: display,
+                birthday: nil,
+                pronouns: nil,
+                initial: String(resolvedName.prefix(1)).uppercased(),
+                accentColorHex: Self.colorHex(for: memberId),
+                avatarSystemImage: nil,
+                avatarId: AvatarCatalog.defaultAvatarId(for: memberId),
+                preferredThemeId: ThemeManager.shared.theme.id,
+                appleUserId: appleUserId,
+                locationSharingEnabled: sharesLocation
+            )
+            members.append(member)
+            if !family.memberIds.contains(memberId) {
+                family.memberIds.append(memberId)
+            }
+        }
+
+        account.memberId = memberId
+        account.appleUserId = appleUserId
+        account.email = email ?? account.email
+
+        let phoneId = WatchSync.localDeviceId
+        if !devices.contains(where: { $0.id == phoneId }) {
+            devices.append(Device(
+                id: phoneId,
+                memberId: memberId,
+                kind: .iPhone,
+                displayName: "\(displayName(memberId))'s iPhone",
+                hasCellularData: true,
+                isOnWrist: nil,
+                lastSeenAt: nil,
+                batteryPercent: nil
+            ))
+        }
+
+        rebuildDefaultRelationships(joinedMemberId: memberId, role: role, sharesLocation: sharesLocation)
+        save()
+    }
+
+    private func rebuildDefaultRelationships(joinedMemberId: UUID, role: JoinRole, sharesLocation: Bool) {
+        var guardianIds = Set(watcherMembers.map(\.id))
+        var watchedIds = Set(watchedMembers.map(\.id))
+
+        if role == .guardian || role == .both {
+            guardianIds.insert(joinedMemberId)
+        }
+        if role == .watched || role == .both || sharesLocation {
+            watchedIds.insert(joinedMemberId)
+        }
+
+        for guardianId in guardianIds {
+            for watchedId in watchedIds where guardianId != watchedId {
+                guard !relationships.contains(where: {
+                    $0.watcherId == guardianId && $0.watchedId == watchedId
+                }) else { continue }
+                relationships.append(Relationship(
+                    id: UUID(),
+                    watcherId: guardianId,
+                    watchedId: watchedId,
+                    label: nil,
+                    createdAt: Date()
+                ))
+            }
+        }
+    }
+
+    private static func colorHex(for id: UUID) -> UInt32 {
+        let palette: [UInt32] = [0xD99FB1, 0x7BB89F, 0xE1B866, 0x80A9C8, 0xB497D6, 0xD88A77]
+        return palette[abs(id.uuidString.hashValue) % palette.count]
     }
     func addMember(_ member: Member) {
         members.append(member)

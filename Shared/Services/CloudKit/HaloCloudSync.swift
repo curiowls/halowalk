@@ -24,10 +24,24 @@ import Combine
 final class HaloCloudSync: ObservableObject {
     static let shared = HaloCloudSync()
 
+    enum DatabaseScope: String, Codable {
+        case privateOwner
+        case sharedParticipant
+
+        var label: String {
+            switch self {
+            case .privateOwner: return "private owner"
+            case .sharedParticipant: return "shared participant"
+            }
+        }
+    }
+
     @Published private(set) var accountAvailable = false
     @Published private(set) var lastSyncAt: Date?
     @Published private(set) var lastError: String?
     @Published private(set) var isRunning = false
+    @Published private(set) var databaseScope: DatabaseScope = .privateOwner
+    @Published private(set) var activeZoneDescription = CloudKitSchema.zoneName
 
     /// Rolling, on-device diagnostics log. Surfaced in the CloudKit
     /// diagnostics screen so we can read exactly what the sync engine is
@@ -68,6 +82,59 @@ final class HaloCloudSync: ObservableObject {
         }
     }
 
+    func deleteLocationReadings(for memberId: UUID) {
+        guard let engine else { return }
+        let deletes = FamilyStore.shared.devices(for: memberId).map {
+            CKSyncEngine.PendingRecordZoneChange.deleteRecord(
+                CloudKitSchema.readingRecordID(memberId: memberId, deviceId: $0.id))
+        }
+        guard !deletes.isEmpty else { return }
+        engine.state.add(pendingRecordZoneChanges: deletes)
+        note("deleteLocationReadings: queued \(deletes.count) reading delete(s) for \(memberId)")
+        Task { try? await engine.sendChanges() }
+    }
+
+    func acceptShare(metadata: CKShare.Metadata) {
+        note("acceptShare: begin")
+        Task {
+            do {
+                try await accept(metadata)
+                await MainActor.run {
+                    self.configureSharedSession(zoneID: metadata.rootRecordID.zoneID)
+                    self.restart()
+                    self.note("acceptShare: accepted zone=\(metadata.rootRecordID.zoneID.zoneName)/\(metadata.rootRecordID.zoneID.ownerName)")
+                }
+            } catch {
+                await MainActor.run {
+                    self.lastError = error.localizedDescription
+                    self.note("acceptShare FAILED: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    #if os(iOS)
+    func prepareFamilyShare(
+        completion: @escaping (CKShare?, CKContainer?, Error?) -> Void
+    ) {
+        Task {
+            do {
+                let share = try await self.loadOrCreateFamilyShare()
+                await MainActor.run {
+                    self.note("prepareFamilyShare: ready")
+                    completion(share, self.container, nil)
+                }
+            } catch {
+                await MainActor.run {
+                    self.lastError = error.localizedDescription
+                    self.note("prepareFamilyShare FAILED: \(error.localizedDescription)")
+                    completion(nil, self.container, error)
+                }
+            }
+        }
+    }
+    #endif
+
     private var engine: CKSyncEngine?
     private var cancellables = Set<AnyCancellable>()
 
@@ -84,14 +151,170 @@ final class HaloCloudSync: ObservableObject {
     /// bug from Build 30.
     private var fetchedAnyRecords = false
 
-    private let stateKey = "halowalk.cksync.state.v1"
+    private let privateStateKey = "halowalk.cksync.state.v1"
+    private let sharedStateKey = "halowalk.cksync.shared.state.v1"
+    private let sharedZoneNameKey = "halowalk.cksync.shared.zoneName.v1"
+    private let sharedZoneOwnerKey = "halowalk.cksync.shared.ownerName.v1"
     private var container: CKContainer {
         CKContainer(identifier: CloudKitSchema.containerID)
+    }
+    private var activeDatabase: CKDatabase {
+        switch databaseScope {
+        case .privateOwner: return container.privateCloudDatabase
+        case .sharedParticipant: return container.sharedCloudDatabase
+        }
+    }
+    private var stateKey: String {
+        switch databaseScope {
+        case .privateOwner: return privateStateKey
+        case .sharedParticipant: return sharedStateKey
+        }
     }
 
     private init() {
         log = (UserDefaults.standard.array(forKey: logKey) as? [String]) ?? []
+        restoreSharedSessionIfPresent()
     }
+
+    private func restoreSharedSessionIfPresent() {
+        guard
+            let zoneName = UserDefaults.standard.string(forKey: sharedZoneNameKey),
+            let ownerName = UserDefaults.standard.string(forKey: sharedZoneOwnerKey)
+        else {
+            CloudKitSchema.usePrivateZone()
+            databaseScope = .privateOwner
+            activeZoneDescription = "\(CloudKitSchema.zoneID.zoneName) / \(CloudKitSchema.zoneID.ownerName)"
+            return
+        }
+        let zoneID = CKRecordZone.ID(zoneName: zoneName, ownerName: ownerName)
+        CloudKitSchema.useSharedZone(zoneID)
+        databaseScope = .sharedParticipant
+        activeZoneDescription = "\(zoneName) / \(ownerName)"
+    }
+
+    private func configureSharedSession(zoneID: CKRecordZone.ID) {
+        UserDefaults.standard.set(zoneID.zoneName, forKey: sharedZoneNameKey)
+        UserDefaults.standard.set(zoneID.ownerName, forKey: sharedZoneOwnerKey)
+        CloudKitSchema.useSharedZone(zoneID)
+        databaseScope = .sharedParticipant
+        activeZoneDescription = "\(zoneID.zoneName) / \(zoneID.ownerName)"
+        UserDefaults.standard.removeObject(forKey: sharedStateKey)
+    }
+
+    private func restart() {
+        cancellables.removeAll()
+        engine = nil
+        isRunning = false
+        fetchedAnyRecords = false
+        start()
+    }
+
+    private func accept(_ metadata: CKShare.Metadata) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var didResume = false
+            func resumeOnce(_ result: Result<Void, Error>) {
+                guard !didResume else { return }
+                didResume = true
+                switch result {
+                case .success: continuation.resume()
+                case .failure(let error): continuation.resume(throwing: error)
+                }
+            }
+            let op = CKAcceptSharesOperation(shareMetadatas: [metadata])
+            op.perShareResultBlock = { _, result in
+                if case .failure(let error) = result {
+                    resumeOnce(.failure(error))
+                }
+            }
+            op.acceptSharesResultBlock = { result in
+                switch result {
+                case .success:
+                    resumeOnce(.success(()))
+                case .failure(let error):
+                    resumeOnce(.failure(error))
+                }
+            }
+            container.add(op)
+        }
+    }
+
+    #if os(iOS)
+    private func loadOrCreateFamilyShare() async throws -> CKShare {
+        guard databaseScope == .privateOwner else {
+            throw NSError(
+                domain: "HaloWalk.CloudSharing",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Only the family owner can manage the share."]
+            )
+        }
+        let root = try await fetchOrBuildFamilyRootRecord()
+        if let shareRef = root.share {
+            let share = try await fetchShare(recordID: shareRef.recordID)
+            cache(share)
+            return share
+        }
+
+        let share = CKShare(
+            rootRecord: root,
+            shareID: CloudKitSchema.shareRecordID(familyId: FamilyStore.shared.family.id)
+        )
+        share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
+        share.publicPermission = .none
+        let saved = try await modify(recordsToSave: [root, share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
+        for record in saved { cache(record) }
+        return saved.compactMap { $0 as? CKShare }.first ?? share
+    }
+
+    private func fetchOrBuildFamilyRootRecord() async throws -> CKRecord {
+        let id = CloudKitSchema.familyRecordID(FamilyStore.shared.family.id)
+        if let cached = cachedBaseRecord(for: id) {
+            let fresh = CloudKitSchema.record(for: FamilyStore.shared.family)
+            for key in fresh.allKeys() { cached[key] = fresh[key] }
+            return cached
+        }
+        do {
+            let record = try await container.privateCloudDatabase.record(for: id)
+            cache(record)
+            let fresh = CloudKitSchema.record(for: FamilyStore.shared.family)
+            for key in fresh.allKeys() { record[key] = fresh[key] }
+            return record
+        } catch {
+            return CloudKitSchema.record(for: FamilyStore.shared.family)
+        }
+    }
+
+    private func fetchShare(recordID: CKRecord.ID) async throws -> CKShare {
+        let record = try await container.privateCloudDatabase.record(for: recordID)
+        guard let share = record as? CKShare else {
+            throw NSError(
+                domain: "HaloWalk.CloudSharing",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "CloudKit returned a non-share record."]
+            )
+        }
+        return share
+    }
+
+    private func modify(
+        recordsToSave: [CKRecord]?,
+        recordIDsToDelete: [CKRecord.ID]?,
+        database: CKDatabase
+    ) async throws -> [CKRecord] {
+        try await withCheckedThrowingContinuation { continuation in
+            let op = CKModifyRecordsOperation(recordsToSave: recordsToSave, recordIDsToDelete: recordIDsToDelete)
+            op.savePolicy = .changedKeys
+            op.modifyRecordsResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume(returning: recordsToSave ?? [])
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            database.add(op)
+        }
+    }
+    #endif
 
     // MARK: - Lifecycle
 
@@ -108,7 +331,7 @@ final class HaloCloudSync: ObservableObject {
     ///      reinstall) does this device seed the cloud from local state
     func start() {
         guard engine == nil else { return }
-        note("start(): begin")
+        note("start(): begin scope=\(databaseScope.label), zone=\(CloudKitSchema.zoneID.zoneName)/\(CloudKitSchema.zoneID.ownerName)")
         Task {
             let status = try? await container.accountStatus()
             self.accountAvailable = (status == .available)
@@ -164,16 +387,20 @@ final class HaloCloudSync: ObservableObject {
             try? JSONDecoder().decode(CKSyncEngine.State.Serialization.self, from: $0)
         }
         var config = CKSyncEngine.Configuration(
-            database: container.privateCloudDatabase,
+            database: activeDatabase,
             stateSerialization: stateSerialization,
             delegate: self
         )
         config.automaticallySync = true
         self.engine = CKSyncEngine(config)
-        // Make sure the custom zone exists before any record save.
-        self.engine?.state.add(pendingDatabaseChanges: [
-            .saveZone(CKRecordZone(zoneID: CloudKitSchema.zoneID))
-        ])
+        // Owners create the custom zone in their private database.
+        // Participants receive the already-created shared zone after
+        // accepting the CKShare; saving the zone in shared DB is invalid.
+        if databaseScope == .privateOwner {
+            self.engine?.state.add(pendingDatabaseChanges: [
+                .saveZone(CKRecordZone(zoneID: CloudKitSchema.zoneID))
+            ])
+        }
     }
 
     // MARK: - Local → Cloud
@@ -236,6 +463,7 @@ final class HaloCloudSync: ObservableObject {
         guard !applyingRemoteChanges, let engine else { return }
         var changes: [CKSyncEngine.PendingRecordZoneChange] = []
         for (memberId, byDevice) in PresenceStore.shared.readings {
+            guard FamilyStore.shared.member(memberId)?.sharesLocation != false else { continue }
             for deviceId in byDevice.keys {
                 changes.append(.saveRecord(
                     CloudKitSchema.readingRecordID(memberId: memberId, deviceId: deviceId)))
@@ -317,13 +545,13 @@ final class HaloCloudSync: ObservableObject {
     }
 
     // MARK: - CKRecord system-fields cache
-    // Keyed by recordName → archived system fields (recordID + change
+    // Keyed by zone + recordName → archived system fields (recordID + change
     // tag + zone). Persisted so change tags survive relaunch. Updated
     // whenever we see an authoritative server record (fetch or successful
     // send).
 
     private var systemFields: [String: Data] = [:]
-    private let systemFieldsKey = "halowalk.cksync.systemFields.v1"
+    private let systemFieldsKey = "halowalk.cksync.systemFields.v2"
 
     private func loadSystemFields() {
         if let data = UserDefaults.standard.data(forKey: systemFieldsKey),
@@ -340,16 +568,19 @@ final class HaloCloudSync: ObservableObject {
         let coder = NSKeyedArchiver(requiringSecureCoding: true)
         record.encodeSystemFields(with: coder)
         coder.finishEncoding()
-        systemFields[record.recordID.recordName] = coder.encodedData
+        systemFields[systemFieldKey(for: record.recordID)] = coder.encodedData
         saveSystemFields()
     }
     private func cachedBaseRecord(for recordID: CKRecord.ID) -> CKRecord? {
-        guard let data = systemFields[recordID.recordName],
+        guard let data = systemFields[systemFieldKey(for: recordID)],
               let coder = try? NSKeyedUnarchiver(forReadingFrom: data) else { return nil }
         coder.requiresSecureCoding = true
         let rec = CKRecord(coder: coder)
         coder.finishDecoding()
         return rec
+    }
+    private func systemFieldKey(for recordID: CKRecord.ID) -> String {
+        "\(recordID.zoneID.ownerName)|\(recordID.zoneID.zoneName)|\(recordID.recordName)"
     }
 
     // MARK: - Cloud → Local

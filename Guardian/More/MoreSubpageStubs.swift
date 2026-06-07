@@ -319,10 +319,17 @@ struct PrivacyPermissionsView: View {
             if let me = familyStore.me, familyStore.isGuardian(me.id) {
                 Section("Sharing my location with the family") {
                     Toggle("Share my location", isOn: Binding(
-                        get: { presenceStore.guardiansSharing.contains(me.id) },
+                        get: { me.sharesLocation },
                         set: { newVal in
-                            if newVal { presenceStore.guardiansSharing.insert(me.id) }
-                            else      { presenceStore.guardiansSharing.remove(me.id) }
+                            var updated = me
+                            updated.locationSharingEnabled = newVal
+                            familyStore.updateMember(updated)
+                            if newVal {
+                                presenceStore.guardiansSharing.insert(me.id)
+                            } else {
+                                presenceStore.removeReadings(for: me.id)
+                                HaloCloudSync.shared.deleteLocationReadings(for: me.id)
+                            }
                         }
                     ))
                 }

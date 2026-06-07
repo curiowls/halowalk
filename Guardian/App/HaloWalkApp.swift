@@ -1,8 +1,11 @@
 import SwiftUI
 import UIKit
+import CloudKit
 
 @main
 struct HaloWalkApp: App {
+    @UIApplicationDelegateAdaptor(HaloWalkAppDelegate.self) private var appDelegate
+
     @StateObject private var themeManager = ThemeManager.shared
     @StateObject private var locationManager = LocationManager.shared
     @StateObject private var familyStore = FamilyStore.shared
@@ -11,8 +14,10 @@ struct HaloWalkApp: App {
     @StateObject private var triggerStore = TriggerStore.shared
     @StateObject private var presenceStore = PresenceStore.shared
     @StateObject private var notificationDelivery = NotificationDelivery.shared
+    @StateObject private var cloudSync = HaloCloudSync.shared
 
     @AppStorage("halowalk.onboarding.complete") private var onboardingComplete = false
+    @AppStorage("halowalk.familySharing.joinSetupComplete") private var joinSetupComplete = true
 
     /// Pilot kill-switches. If a launch is freezing, the user can disable any
     /// of these from Privacy & permissions → Diagnostics, then relaunch.
@@ -44,7 +49,13 @@ struct HaloWalkApp: App {
         WindowGroup {
             Group {
                 if onboardingComplete {
-                    RootTabView()
+                    if cloudSync.databaseScope == .sharedParticipant && !joinSetupComplete {
+                        FamilySharingJoinSetupView {
+                            joinSetupComplete = true
+                        }
+                    } else {
+                        RootTabView()
+                    }
                 } else {
                     OnboardingFlow()
                 }
@@ -59,6 +70,7 @@ struct HaloWalkApp: App {
             .environmentObject(triggerStore)
             .environmentObject(presenceStore)
             .environmentObject(notificationDelivery)
+            .environmentObject(cloudSync)
             .environment(\.theme, themeManager.theme)
             .preferredColorScheme(.light)
             .task {
@@ -145,5 +157,18 @@ struct HaloWalkApp: App {
         LaunchLog.step("hubs.geocode.complete")
 
         LaunchLog.step("app.task.complete")
+    }
+}
+
+final class HaloWalkAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata
+    ) {
+        Task { @MainActor in
+            HaloCloudSync.shared.acceptShare(metadata: cloudKitShareMetadata)
+            UserDefaults.standard.set(false, forKey: "halowalk.familySharing.joinSetupComplete")
+            UserDefaults.standard.set(true, forKey: "halowalk.onboarding.complete")
+        }
     }
 }

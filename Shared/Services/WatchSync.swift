@@ -158,7 +158,9 @@ final class WatchSync: NSObject, ObservableObject {
             "displayName": member.displayName,
             "initial": member.initial,
             "accentColorHex": member.accentColorHex,
-            "preferredThemeId": member.preferredThemeId
+            "preferredThemeId": member.preferredThemeId,
+            "appleUserId": member.appleUserId ?? "",
+            "locationSharingEnabled": member.sharesLocation
         ]
     }
     private func serialize(device: Device) -> [String: Any] {
@@ -340,7 +342,9 @@ final class WatchSync: NSObject, ObservableObject {
             id: id, name: name, displayName: displayName,
             birthday: nil, pronouns: nil, initial: initial,
             accentColorHex: accentColorHex, avatarSystemImage: nil,
-            preferredThemeId: preferredThemeId
+            preferredThemeId: preferredThemeId,
+            appleUserId: (raw["appleUserId"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            locationSharingEnabled: raw["locationSharingEnabled"] as? Bool
         )
     }
     private func deserialize(device raw: [String: Any]) -> Device? {

@@ -75,6 +75,10 @@ final class WatchLocationReporter {
         lastSentCoordinate = location.coordinate
 
         let memberId = FamilyStore.shared.account.memberId
+        guard FamilyStore.shared.member(memberId)?.sharesLocation != false else {
+            PresenceStore.shared.removeReadings(for: memberId)
+            return
+        }
         let reading = LocationReading(
             memberId: memberId,
             deviceId: WatchSync.localDeviceId,

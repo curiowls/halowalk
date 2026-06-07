@@ -97,6 +97,11 @@ final class PresenceStore: ObservableObject {
         readings[reading.memberId] = byDevice
     }
 
+    func removeReadings(for memberId: UUID) {
+        readings.removeValue(forKey: memberId)
+        guardiansSharing.remove(memberId)
+    }
+
     /// Convenience for guardian "moving pin" features.
     func guardianPresences(in family: Family, knownMembers: [Member]) -> [GuardianPresence] {
         let watchers = knownMembers.filter { m in

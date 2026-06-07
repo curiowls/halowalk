@@ -47,6 +47,11 @@ final class IPhoneLocationReporter {
         lastSentCoordinate = location.coordinate
 
         let memberId = FamilyStore.shared.account.memberId
+        guard FamilyStore.shared.member(memberId)?.sharesLocation != false else {
+            PresenceStore.shared.removeReadings(for: memberId)
+            HaloCloudSync.shared.deleteLocationReadings(for: memberId)
+            return
+        }
         let reading = LocationReading(
             memberId: memberId,
             deviceId: localPhoneDeviceId(forMemberId: memberId),
