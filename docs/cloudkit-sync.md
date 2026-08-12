@@ -75,7 +75,7 @@ State serialization (`CKSyncEngine.State.Serialization`, a `Codable`) is persist
 
 ## Sharing flow
 
-1. The owner opens **Family members → Invite family member**.
+1. The owner taps **Invite family member** from the Family tab header or opens **More → Family members → Invite family member**.
 2. `UICloudSharingController` asks `HaloCloudSync` to create or fetch the family `CKShare`.
 3. The invited person accepts the CloudKit link. iOS launches HaloWalk through `CKSharingSupported` and `HaloWalkAppDelegate.application(_:userDidAcceptCloudKitShareWith:)`.
 4. HaloWalk accepts the share, persists the shared zone owner/name, restarts sync against `sharedCloudDatabase`, and shows the join setup screen.
@@ -129,9 +129,9 @@ If nothing syncs: check **Privacy & permissions → Diagnostics → "CloudKit sy
 Use TestFlight build **1.0 (38)** or newer on both devices.
 
 1. Prepare two iPhones signed into different Apple IDs. Both devices need iCloud Drive enabled, HaloWalk installed from TestFlight, and network access.
-2. Device A: open HaloWalk, complete onboarding, then go to **More → Family members**.
+2. Device A: open HaloWalk and complete onboarding.
    - After Sign in with Apple, an untouched demo roster should collapse to Device A's signed-in person before CloudKit seeds the family.
-3. Device A: tap **Invite family member**. Send the CloudKit share invite to Device B through Messages, Mail, or AirDrop.
+3. Device A: tap **Invite family member** from the Family tab header or **More → Family members**. Send the CloudKit share invite to Device B through Messages, Mail, or AirDrop.
 4. Device B: open the invite link. iOS should launch HaloWalk through the CloudKit share acceptance flow.
 5. Device B: complete the **Join family** setup screen:
    - choose `Guardian`, `Watched member`, or `Both`
@@ -141,7 +141,7 @@ Use TestFlight build **1.0 (38)** or newer on both devices.
    - Device A and Device B show the same family name, members, hubs, and relationships.
    - Device B's joined member is visible by default.
    - Device A can open Device B's member detail and use the eye-slash action to hide them locally.
-   - Device A can unhide Device B from **More → Family members → Hidden on this device**.
+   - Device A can unhide Device B from the Family list's **Hidden on this device** section or from **More → Family members → Hidden on this device**.
 7. Device B: turn **Privacy & permissions → Share my location** off; verify B's pin disappears and its cloud readings are deleted.
 
 If Device B still only sees mock members after accepting:

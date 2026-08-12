@@ -19,6 +19,22 @@ struct FamilyListView: View {
                     }
                     .buttonStyle(.plain)
                 }
+
+                if !hiddenMembers.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Hidden on this device")
+                            .font(theme.typography.font(.handTight, size: 11))
+                            .tracking(0.6)
+                            .foregroundColor(theme.palette.ink3)
+                            .padding(.top, 8)
+                        ForEach(hiddenMembers) { member in
+                            HiddenFamilyMemberCard(member: member) {
+                                familyStore.setMember(member.id, hidden: false)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 30)
@@ -35,6 +51,12 @@ struct FamilyListView: View {
         return wearers + guardians
     }
 
+    private var hiddenMembers: [Member] {
+        familyStore.members
+            .filter { familyStore.isMemberHidden($0.id) }
+            .sorted { $0.name < $1.name }
+    }
+
     private func severity(_ m: Member) -> Int {
         guard let r = presenceStore.reading(for: m.id) else { return 0 }
         switch r.state {
@@ -44,6 +66,42 @@ struct FamilyListView: View {
         case .inHalo: return 1
         case .noPing, .unknown: return 0
         }
+    }
+}
+
+private struct HiddenFamilyMemberCard: View {
+    @Environment(\.theme) var theme
+    let member: Member
+    let onShow: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            MemberAvatar(member, size: 40)
+                .opacity(0.55)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.displayName)
+                    .font(theme.typography.font(.handTight, size: 14, weight: .bold))
+                    .foregroundColor(theme.palette.ink2)
+                Text("Hidden from your list and map")
+                    .font(theme.typography.font(.handFlow, size: 12))
+                    .foregroundColor(theme.palette.ink3)
+            }
+            Spacer()
+            Button(action: onShow) {
+                Image(systemName: "eye")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.palette.ink)
+                    .frame(width: 36, height: 36)
+                    .sketchBorder(padding: 0)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show \(member.displayName)")
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(0.72)
+        .sketchBorder(dashed: true, fill: theme.palette.paper2.opacity(0.45), padding: 0)
     }
 }
 

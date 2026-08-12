@@ -5,6 +5,7 @@ import SwiftUI
 struct FamilyTabView: View {
     @Environment(\.theme) var theme
     @EnvironmentObject var familyStore: FamilyStore
+    @ObservedObject private var cloudSync = HaloCloudSync.shared
     // Build 25: default to map and persist the last choice across app
     // launches. Per the user: "I constantly switch to the map view. In
     // most families, the guardian likely manages 1‑2 children and 1‑2
@@ -12,6 +13,7 @@ struct FamilyTabView: View {
     @AppStorage("halowalk.familyTab.mode") private var mode: Mode = .map
     @State private var path: [FamilyRoute] = []
     @State private var editingHub: Hub? = nil
+    @State private var showingShareSheet = false
 
     enum Mode: String, CaseIterable { case list, map }
     enum FamilyRoute: Hashable {
@@ -21,7 +23,12 @@ struct FamilyTabView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
-                FamilyHeader(mode: $mode, familyName: familyStore.family.name)
+                FamilyHeader(
+                    mode: $mode,
+                    familyName: familyStore.family.name,
+                    canInvite: cloudSync.databaseScope == .privateOwner,
+                    onInvite: { showingShareSheet = true }
+                )
                     .padding(.horizontal, 16)
                     .padding(.top, 6)
                     .padding(.bottom, 8)
@@ -52,6 +59,9 @@ struct FamilyTabView: View {
             .sheet(item: $editingHub) { hub in
                 EditHubSheet(hub: hub)
             }
+            .sheet(isPresented: $showingShareSheet) {
+                CloudFamilySharingSheet()
+            }
         }
         // Family tab is the canonical "I want to see where everyone is"
         // surface — keep continuous coarse updates running for the duration.
@@ -63,6 +73,8 @@ private struct FamilyHeader: View {
     @Environment(\.theme) var theme
     @Binding var mode: FamilyTabView.Mode
     let familyName: String
+    let canInvite: Bool
+    let onInvite: () -> Void
 
     var body: some View {
         HStack(alignment: .center) {
@@ -74,6 +86,17 @@ private struct FamilyHeader: View {
                     .foregroundColor(theme.palette.ink3)
             }
             Spacer()
+            if canInvite {
+                Button(action: onInvite) {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.palette.ink)
+                        .frame(width: 34, height: 34)
+                        .sketchBorder(padding: 0)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Invite family member")
+            }
             ListMapToggle(mode: $mode)
         }
     }
