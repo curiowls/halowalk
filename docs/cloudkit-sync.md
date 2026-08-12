@@ -82,6 +82,8 @@ State serialization (`CKSyncEngine.State.Serialization`, a `Codable`) is persist
 5. The participant signs in with Apple, chooses `Guardian`, `Watched member`, or `Both`, and explicitly chooses whether to share this iPhone's location.
 6. `FamilyStore` creates/claims the participant `Member`, adds device metadata, and adds missing all-guardian/all-watched relationships.
 
+On launch, if no local shared-zone cache exists, HaloWalk also checks the user's `sharedCloudDatabase` for an accepted `HaloFamily` zone. If found, it switches into shared-participant mode, fetches the shared family, and shows the join setup screen again if this install has not completed setup. This covers reinstall / local-cache-loss after the CloudKit share has already been accepted.
+
 ---
 
 ## ⚠️ The Development → Production schema deploy (READ THIS)
@@ -147,6 +149,7 @@ If Device B still only sees mock members after accepting:
 - Confirm the CloudKit Production schema has been deployed after adding `Member.appleUserId` and `Member.locationSharingEnabled`.
 - On Device B, open **More → CloudKit sync** and check that the database scope is `shared participant`, not `private owner`.
 - Reopen the original invite link. Share acceptance is what moves Device B into the owner's shared CloudKit zone; Apple Family Sharing membership alone does not.
+- After Device B has accepted once, delete and reinstall HaloWalk on Device B. On launch, HaloWalk should rediscover the accepted shared zone, show **Join family**, and return to the same shared family after setup.
 
 ---
 

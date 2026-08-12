@@ -42,6 +42,7 @@ final class HaloCloudSync: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var databaseScope: DatabaseScope = .privateOwner
     @Published private(set) var activeZoneDescription = CloudKitSchema.zoneName
+    @Published private(set) var discoveredSharedFamilyOnLaunch = false
 
     /// Rolling, on-device diagnostics log. Surfaced in the CloudKit
     /// diagnostics screen so we can read exactly what the sync engine is
@@ -110,6 +111,30 @@ final class HaloCloudSync: ObservableObject {
                     self.note("acceptShare FAILED: \(error.localizedDescription)")
                 }
             }
+        }
+    }
+
+    func discoverAcceptedShareIfNeeded() async -> Bool {
+        guard databaseScope == .privateOwner else { return false }
+        do {
+            let zones = try await container.sharedCloudDatabase.allRecordZones()
+            guard let familyZone = zones.map(\.zoneID).first(where: { $0.zoneName == CloudKitSchema.zoneName }) else {
+                note("discoverAcceptedShare: no accepted HaloFamily shared zone")
+                return false
+            }
+            await MainActor.run {
+                self.note("discoverAcceptedShare: found zone=\(familyZone.zoneName)/\(familyZone.ownerName)")
+                self.configureSharedSession(zoneID: familyZone)
+                self.discoveredSharedFamilyOnLaunch = true
+                self.restart()
+            }
+            return true
+        } catch {
+            await MainActor.run {
+                self.lastError = error.localizedDescription
+                self.note("discoverAcceptedShare FAILED: \(error.localizedDescription)")
+            }
+            return false
         }
     }
 
@@ -339,6 +364,10 @@ final class HaloCloudSync: ObservableObject {
             guard self.accountAvailable else {
                 self.lastError = "iCloud unavailable (status: \(String(describing: status)))."
                 note("ABORT — iCloud unavailable")
+                return
+            }
+            if await self.discoverAcceptedShareIfNeeded() {
+                note("start(): switched to discovered shared family; restarted")
                 return
             }
             self.bootEngine()
