@@ -159,7 +159,7 @@ final class FamilyStore: ObservableObject {
     }
 
     var hiddenMemberIds: Set<UUID> {
-        Set(account.hiddenMemberIds)
+        Set(account.hiddenMemberIds).subtracting([account.memberId])
     }
 
     func isMemberHidden(_ memberId: UUID) -> Bool {
@@ -321,6 +321,7 @@ final class FamilyStore: ObservableObject {
         account.memberId = memberId
         account.appleUserId = appleUserId
         account.email = email ?? account.email
+        account.hiddenMemberIds.removeAll { $0 == memberId }
 
         let phoneId = WatchSync.localDeviceId
         if !devices.contains(where: { $0.id == phoneId }) {
