@@ -50,6 +50,8 @@ struct FamilyManagementView: View {
                     }
                 }
 
+                SharingInviteNote()
+
                 Button { showingShareSheet = true } label: {
                     Label("Invite family member", systemImage: "person.badge.plus")
                         .font(theme.typography.font(.handFlow, size: 16))
@@ -195,11 +197,39 @@ private struct HiddenMemberRow: View {
     }
 }
 
+private struct SharingInviteNote: View {
+    @Environment(\.theme) var theme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "icloud.and.arrow.up")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(theme.palette.ink2)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("To see a family member here, send a HaloWalk invite and have them accept it on their iPhone.")
+                    .font(theme.typography.font(.handTight, size: 13, weight: .bold))
+                    .foregroundColor(theme.palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Apple Family Sharing does not add people to app data automatically.")
+                    .font(theme.typography.font(.handFlow, size: 12))
+                    .foregroundColor(theme.palette.ink3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .sketchBorder(fill: theme.palette.highlightSoft, padding: 0)
+    }
+}
+
 /// Per-member detail with theme picker. Pushed from Family Management.
 struct MemberSettingsView: View {
     @Environment(\.theme) var theme
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var familyStore = FamilyStore.shared
     let memberId: UUID
+    @State private var showingHideConfirm = false
 
     private var member: Member? { familyStore.member(memberId) }
 
@@ -247,6 +277,43 @@ struct MemberSettingsView: View {
         .background(theme.palette.paper.ignoresSafeArea())
         .navigationTitle(member?.displayName ?? "Member")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let member, member.id != familyStore.account.memberId {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingHideConfirm = true
+                    } label: {
+                        Image(systemName: familyStore.isMemberHidden(member.id) ? "eye" : "eye.slash")
+                    }
+                    .accessibilityLabel(
+                        familyStore.isMemberHidden(member.id)
+                        ? "Show family member"
+                        : "Hide family member"
+                    )
+                }
+            }
+        }
+        .confirmationDialog(
+            "Hide this family member?",
+            isPresented: $showingHideConfirm,
+            titleVisibility: .visible
+        ) {
+            if let member {
+                if familyStore.isMemberHidden(member.id) {
+                    Button("Show \(member.displayName)") {
+                        familyStore.setMember(member.id, hidden: false)
+                    }
+                } else {
+                    Button("Hide \(member.displayName)", role: .destructive) {
+                        familyStore.setMember(member.id, hidden: true)
+                        dismiss()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This only changes what you see on this device. It does not remove them from the shared family.")
+        }
     }
 
     private func themeDescription(for member: Member) -> String {
