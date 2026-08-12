@@ -119,8 +119,9 @@ inform the eventual default.
 ## Pilot caveats
 
 - The app now has real local location reporting, WatchConnectivity, local
-  notifications, and CloudKit sync paths. `Shared/Mock/MockData.swift` is still
-  the bootstrap/demo family until a real family share is accepted.
+  notifications, and CloudKit sync paths. `Shared/Mock/MockData.swift` remains
+  a development fallback, but TestFlight onboarding prunes the untouched demo
+  roster once the user signs in with Apple.
 - Custom fonts gracefully fall back to system rounded if the .ttf files are
   missing — but for the heartwarming feel, run `Scripts/fetch-fonts.sh` first.
 - WatchConnectivity is wired for iPhone↔Watch family/app context, watch

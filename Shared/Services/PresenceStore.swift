@@ -102,6 +102,11 @@ final class PresenceStore: ObservableObject {
         guardiansSharing.remove(memberId)
     }
 
+    func prune(toMemberIds memberIds: Set<UUID>) {
+        readings = readings.filter { memberIds.contains($0.key) }
+        guardiansSharing = guardiansSharing.intersection(memberIds)
+    }
+
     /// Convenience for guardian "moving pin" features.
     func guardianPresences(in family: Family, knownMembers: [Member]) -> [GuardianPresence] {
         let watchers = knownMembers.filter { m in

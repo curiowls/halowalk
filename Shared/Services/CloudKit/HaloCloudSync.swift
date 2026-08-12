@@ -95,6 +95,32 @@ final class HaloCloudSync: ObservableObject {
         Task { try? await engine.sendChanges() }
     }
 
+    func queueDeletedDemoRecords(_ pruned: FamilyStore.DemoPruneResult) {
+        guard let engine else {
+            note("queueDeletedDemoRecords SKIPPED (engine=nil)")
+            return
+        }
+        var deletes: [CKSyncEngine.PendingRecordZoneChange] = []
+        deletes += pruned.memberIds.map {
+            .deleteRecord(CloudKitSchema.memberRecordID($0))
+        }
+        deletes += pruned.relationshipIds.map {
+            .deleteRecord(CloudKitSchema.relationshipRecordID($0))
+        }
+        deletes += pruned.deviceIds.map {
+            .deleteRecord(CloudKitSchema.deviceRecordID($0))
+        }
+        deletes += pruned.memberIds.flatMap { memberId in
+            MockData.allDevices
+                .filter { $0.memberId == memberId }
+                .map { .deleteRecord(CloudKitSchema.readingRecordID(memberId: memberId, deviceId: $0.id)) }
+        }
+        guard !deletes.isEmpty else { return }
+        engine.state.add(pendingRecordZoneChanges: deletes)
+        note("queueDeletedDemoRecords: queued \(deletes.count) demo delete(s)")
+        Task { try? await engine.sendChanges() }
+    }
+
     func acceptShare(metadata: CKShare.Metadata) {
         note("acceptShare: begin")
         Task {
@@ -399,9 +425,16 @@ final class HaloCloudSync: ObservableObject {
             }
 
             if !self.fetchedAnyRecords {
-                note("cloud empty → seeding from local state")
-                self.enqueueEntireLocalState()
-                try? await self.engine?.sendChanges()
+                if FamilyStore.shared.account.appleUserId == nil {
+                    note("cloud empty → waiting for Apple sign-in before seeding")
+                } else {
+                    if let pruned = FamilyStore.shared.pruneUntouchedDemoFamilyIfNeeded() {
+                        self.queueDeletedDemoRecords(pruned)
+                    }
+                    note("cloud empty → seeding from local state")
+                    self.enqueueEntireLocalState()
+                    try? await self.engine?.sendChanges()
+                }
             } else {
                 note("cloud had data → NOT seeding (adopt cloud)")
             }

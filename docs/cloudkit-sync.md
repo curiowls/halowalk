@@ -126,10 +126,11 @@ If nothing syncs: check **Privacy & permissions → Diagnostics → "CloudKit sy
 
 ### Multi-participant
 
-Use TestFlight build **1.0 (36)** or newer on both devices.
+Use TestFlight build **1.0 (38)** or newer on both devices.
 
 1. Prepare two iPhones signed into different Apple IDs. Both devices need iCloud Drive enabled, HaloWalk installed from TestFlight, and network access.
 2. Device A: open HaloWalk, complete onboarding, then go to **More → Family members**.
+   - After Sign in with Apple, an untouched demo roster should collapse to Device A's signed-in person before CloudKit seeds the family.
 3. Device A: tap **Invite family member**. Send the CloudKit share invite to Device B through Messages, Mail, or AirDrop.
 4. Device B: open the invite link. iOS should launch HaloWalk through the CloudKit share acceptance flow.
 5. Device B: complete the **Join family** setup screen:
@@ -145,7 +146,8 @@ Use TestFlight build **1.0 (36)** or newer on both devices.
 
 If Device B still only sees mock members after accepting:
 
-- Confirm both phones are on TestFlight build **1.0 (36)** or newer.
+- Confirm both phones are on TestFlight build **1.0 (38)** or newer.
+- On build **1.0 (38)** or newer, a fresh owner install should not keep showing the full demo roster after Sign in with Apple. If it does, use **More → CloudKit sync** and share the diagnostics log.
 - Confirm the CloudKit Production schema has been deployed after adding `Member.appleUserId` and `Member.locationSharingEnabled`.
 - On Device B, open **More → CloudKit sync** and check that the database scope is `shared participant`, not `private owner`.
 - Reopen the original invite link. Share acceptance is what moves Device B into the owner's shared CloudKit zone; Apple Family Sharing membership alone does not.

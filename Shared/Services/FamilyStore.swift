@@ -28,6 +28,12 @@ final class FamilyStore: ObservableObject {
     @Published var devices: [Device]
     @Published var account: Account
 
+    struct DemoPruneResult {
+        let memberIds: [UUID]
+        let relationshipIds: [UUID]
+        let deviceIds: [UUID]
+    }
+
     private static let familyKey = "halowalk.family.v2"
     private static let membersKey = "halowalk.members.v2"
     private static let relationshipsKey = "halowalk.relationships.v2"
@@ -272,7 +278,61 @@ final class FamilyStore: ObservableObject {
                 }
             }
         }
+        if let pruned = pruneUntouchedDemoFamilyIfNeeded() {
+            HaloCloudSync.shared.queueDeletedDemoRecords(pruned)
+        }
         save()
+    }
+
+    func pruneUntouchedDemoFamilyIfNeeded() -> DemoPruneResult? {
+        guard isUntouchedDemoFamily else { return nil }
+        guard let current = members.first(where: { $0.id == account.memberId }) else { return nil }
+
+        let removedMembers = members.filter { $0.id != current.id }.map(\.id)
+        let removedRelationships = relationships.map(\.id)
+        let removedDevices = devices.filter { $0.memberId != current.id }.map(\.id)
+
+        var solo = current
+        if solo.locationSharingEnabled == nil {
+            solo.locationSharingEnabled = true
+        }
+        members = [solo]
+        relationships = []
+        devices = devices.filter { $0.memberId == current.id && $0.kind == .iPhone }
+        if devices.isEmpty {
+            devices = [Device(
+                id: WatchSync.localDeviceId,
+                memberId: current.id,
+                kind: .iPhone,
+                displayName: "\(solo.displayName)'s iPhone",
+                hasCellularData: true,
+                isOnWrist: nil,
+                lastSeenAt: nil,
+                batteryPercent: nil
+            )]
+        }
+        family.name = "\(solo.displayName)'s Family"
+        family.organizerId = current.id
+        family.memberIds = [current.id]
+        account.hiddenMemberIds.removeAll()
+        PresenceStore.shared.prune(toMemberIds: [current.id])
+
+        return DemoPruneResult(
+            memberIds: removedMembers,
+            relationshipIds: removedRelationships,
+            deviceIds: removedDevices
+        )
+    }
+
+    private var isUntouchedDemoFamily: Bool {
+        let seedMemberIds = Set(MockData.allMembers.map(\.id))
+        let seedDeviceIds = Set(MockData.allDevices.map(\.id))
+        let seedRelationshipPairs = Set(MockData.allRelationships.map { "\($0.watcherId.uuidString):\($0.watchedId.uuidString)" })
+        let relationshipPairs = Set(relationships.map { "\($0.watcherId.uuidString):\($0.watchedId.uuidString)" })
+        return family.id == MockData.family.id &&
+            Set(members.map(\.id)) == seedMemberIds &&
+            relationshipPairs == seedRelationshipPairs &&
+            Set(devices.map(\.id)).isSubset(of: seedDeviceIds)
     }
 
     func configureJoinedAccount(

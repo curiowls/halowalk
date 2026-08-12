@@ -2,7 +2,7 @@ import SwiftUI
 import AuthenticationServices
 
 /// Onboarding flow that runs the first time HaloWalk launches. Build 5+
-/// ships the skeleton — Apple integrations land in Build 7.
+/// signs the local person in and prepares a CloudKit-shareable family.
 struct OnboardingFlow: View {
     @Environment(\.theme) var theme
     @AppStorage("halowalk.onboarding.complete") private var complete = false
@@ -252,12 +252,16 @@ private struct FamilyDetectStep: View {
     let members: [Member]
     let onContinue: () -> Void
 
+    private var currentMember: Member {
+        FamilyStore.shared.me ?? members.first ?? MockData.tiger
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Your family")
                     .font(theme.typography.font(.handTight, size: 28, weight: .bold))
-                Text("Apple Family Sharing detection arrives in Build 7. For now, here's a demo family you can edit.")
+                Text("HaloWalk starts with you. Invite family members after setup so their Apple IDs can join this shared family.")
                     .font(theme.typography.font(.handFlow, size: 14))
                     .foregroundColor(theme.palette.ink3)
             }
@@ -266,18 +270,7 @@ private struct FamilyDetectStep: View {
 
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(members) { m in
-                        DetectedMemberRow(member: m)
-                    }
-                    Button {} label: {
-                        Text("+ Add someone manually")
-                            .font(theme.typography.font(.handFlow, size: 16))
-                            .foregroundColor(theme.palette.ink2)
-                            .padding(.vertical, 14)
-                            .frame(maxWidth: .infinity)
-                            .sketchBorder(dashed: true, padding: 8)
-                    }
-                    .buttonStyle(.plain)
+                    DetectedMemberRow(member: currentMember)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 12)
