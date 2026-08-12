@@ -124,11 +124,29 @@ If nothing syncs: check **Privacy & permissions → Diagnostics → "CloudKit sy
 
 ### Multi-participant
 
-1. Prepare two iPhones with different Apple IDs and iCloud Drive enabled.
-2. Device A: run HaloWalk, complete onboarding, open **Family members → Invite family member**, and send the CloudKit invite.
-3. Device B: accept the invite link, open HaloWalk, complete join setup, and keep location sharing on.
-4. Verify both phones show the same members, hubs, and fresh pins.
-5. Device B: turn **Privacy & permissions → Share my location** off; verify B's pin disappears and its cloud readings are deleted.
+Use TestFlight build **1.0 (36)** or newer on both devices.
+
+1. Prepare two iPhones signed into different Apple IDs. Both devices need iCloud Drive enabled, HaloWalk installed from TestFlight, and network access.
+2. Device A: open HaloWalk, complete onboarding, then go to **More → Family members**.
+3. Device A: tap **Invite family member**. Send the CloudKit share invite to Device B through Messages, Mail, or AirDrop.
+4. Device B: open the invite link. iOS should launch HaloWalk through the CloudKit share acceptance flow.
+5. Device B: complete the **Join family** setup screen:
+   - choose `Guardian`, `Watched member`, or `Both`
+   - keep **Share this iPhone's location** on for the first test
+   - sign in with Apple if prompted
+6. Expected result within ~30 seconds:
+   - Device A and Device B show the same family name, members, hubs, and relationships.
+   - Device B's joined member is visible by default.
+   - Device A can open Device B's member detail and use the eye-slash action to hide them locally.
+   - Device A can unhide Device B from **More → Family members → Hidden on this device**.
+7. Device B: turn **Privacy & permissions → Share my location** off; verify B's pin disappears and its cloud readings are deleted.
+
+If Device B still only sees mock members after accepting:
+
+- Confirm both phones are on TestFlight build **1.0 (36)** or newer.
+- Confirm the CloudKit Production schema has been deployed after adding `Member.appleUserId` and `Member.locationSharingEnabled`.
+- On Device B, open **More → CloudKit sync** and check that the database scope is `shared participant`, not `private owner`.
+- Reopen the original invite link. Share acceptance is what moves Device B into the owner's shared CloudKit zone; Apple Family Sharing membership alone does not.
 
 ---
 
