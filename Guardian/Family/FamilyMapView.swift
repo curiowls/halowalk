@@ -80,7 +80,7 @@ struct FamilyMapView: View {
         let now = Date()
         var raw: [RenderedMarker] = []
         let myId = familyStore.account.memberId
-        for member in familyStore.members {
+        for member in familyStore.visibleMembers {
             let all = presenceStore.readings(for: member.id)
             let fresh = all.filter { now.timeIntervalSince($0.timestamp) < 300 }
             var toShow = fresh.isEmpty ? Array(all.suffix(1)) : fresh

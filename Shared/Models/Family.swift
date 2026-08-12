@@ -24,8 +24,39 @@ struct Account: Codable {
     /// pre-Build-A stored accounts decode cleanly.
     var appleUserId: String?
 
+    /// Members this local account has chosen not to show in family views.
+    /// This is intentionally account-local, not shared through CloudKit.
+    var hiddenMemberIds: [UUID]
+
     enum DeviceKind: String, Codable {
         case iPhone        // Guardian device
         case appleWatch    // Wearer device
+    }
+
+    init(
+        memberId: UUID,
+        email: String?,
+        deviceKind: DeviceKind,
+        appleUserId: String? = nil,
+        hiddenMemberIds: [UUID] = []
+    ) {
+        self.memberId = memberId
+        self.email = email
+        self.deviceKind = deviceKind
+        self.appleUserId = appleUserId
+        self.hiddenMemberIds = hiddenMemberIds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case memberId, email, deviceKind, appleUserId, hiddenMemberIds
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        memberId = try c.decode(UUID.self, forKey: .memberId)
+        email = try c.decodeIfPresent(String.self, forKey: .email)
+        deviceKind = try c.decode(DeviceKind.self, forKey: .deviceKind)
+        appleUserId = try c.decodeIfPresent(String.self, forKey: .appleUserId)
+        hiddenMemberIds = try c.decodeIfPresent([UUID].self, forKey: .hiddenMemberIds) ?? []
     }
 }

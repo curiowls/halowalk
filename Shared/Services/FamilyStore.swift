@@ -158,6 +158,19 @@ final class FamilyStore: ObservableObject {
         members.first { $0.appleUserId == appleUserId }
     }
 
+    var hiddenMemberIds: Set<UUID> {
+        Set(account.hiddenMemberIds)
+    }
+
+    func isMemberHidden(_ memberId: UUID) -> Bool {
+        hiddenMemberIds.contains(memberId)
+    }
+
+    var visibleMembers: [Member] {
+        let hidden = hiddenMemberIds
+        return members.filter { !hidden.contains($0.id) }
+    }
+
     // MARK: - Role inference (from relationships, not stored on Member)
 
     /// Members this Member watches over (= they're a guardian to these).
@@ -165,7 +178,7 @@ final class FamilyStore: ObservableObject {
         let watchedIds = relationships
             .filter { $0.watcherId == memberId }
             .map(\.watchedId)
-        return members.filter { watchedIds.contains($0.id) }
+        return visibleMembers.filter { watchedIds.contains($0.id) }
     }
 
     /// Members watching over this Member (= their guardians).
@@ -173,21 +186,25 @@ final class FamilyStore: ObservableObject {
         let watcherIds = relationships
             .filter { $0.watchedId == memberId }
             .map(\.watcherId)
-        return members.filter { watcherIds.contains($0.id) }
+        return visibleMembers.filter { watcherIds.contains($0.id) }
     }
 
-    func isGuardian(_ memberId: UUID) -> Bool { !watches(by: memberId).isEmpty }
-    func isWatched(_ memberId: UUID) -> Bool { !watchers(of: memberId).isEmpty }
+    func isGuardian(_ memberId: UUID) -> Bool {
+        relationships.contains { $0.watcherId == memberId }
+    }
+    func isWatched(_ memberId: UUID) -> Bool {
+        relationships.contains { $0.watchedId == memberId }
+    }
 
     /// All Members who are watched by anyone (i.e. "wearers" in the old sense).
     var watchedMembers: [Member] {
         let ids = Set(relationships.map(\.watchedId))
-        return members.filter { ids.contains($0.id) }
+        return visibleMembers.filter { ids.contains($0.id) }
     }
     /// All Members who watch anyone (i.e. "guardians" in the old sense).
     var watcherMembers: [Member] {
         let ids = Set(relationships.map(\.watcherId))
-        return members.filter { ids.contains($0.id) }
+        return visibleMembers.filter { ids.contains($0.id) }
     }
 
     // MARK: - Devices
@@ -203,6 +220,27 @@ final class FamilyStore: ObservableObject {
             members[i] = member
             save()
         }
+    }
+
+    func setMember(_ memberId: UUID, hidden: Bool) {
+        guard memberId != account.memberId else { return }
+        var ids = hiddenMemberIds
+        if hidden {
+            ids.insert(memberId)
+        } else {
+            ids.remove(memberId)
+        }
+        account.hiddenMemberIds = Array(ids)
+        save()
+    }
+
+    func toggleHiddenMember(_ memberId: UUID) {
+        setMember(memberId, hidden: !isMemberHidden(memberId))
+    }
+
+    func replaceHiddenMemberIds(_ ids: [UUID]) {
+        account.hiddenMemberIds = ids.filter { $0 != account.memberId }
+        save()
     }
 
     /// Build A: stamp the Sign in with Apple identity onto the local
@@ -303,8 +341,10 @@ final class FamilyStore: ObservableObject {
     }
 
     private func rebuildDefaultRelationships(joinedMemberId: UUID, role: JoinRole, sharesLocation: Bool) {
-        var guardianIds = Set(watcherMembers.map(\.id))
-        var watchedIds = Set(watchedMembers.map(\.id))
+        let allGuardianIds = relationships.map(\.watcherId)
+        let allWatchedIds = relationships.map(\.watchedId)
+        var guardianIds = Set(members.filter { allGuardianIds.contains($0.id) }.map(\.id))
+        var watchedIds = Set(members.filter { allWatchedIds.contains($0.id) }.map(\.id))
 
         if role == .guardian || role == .both {
             guardianIds.insert(joinedMemberId)

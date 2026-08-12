@@ -41,6 +41,15 @@ struct FamilyManagementView: View {
                     }
                 }
 
+                if !hiddenMembers.isEmpty {
+                    SectionLabel("Hidden on this device")
+                    ForEach(hiddenMembers) { member in
+                        HiddenMemberRow(member: member) {
+                            familyStore.setMember(member.id, hidden: false)
+                        }
+                    }
+                }
+
                 Button { showingShareSheet = true } label: {
                     Label("Invite family member", systemImage: "person.badge.plus")
                         .font(theme.typography.font(.handFlow, size: 16))
@@ -79,6 +88,10 @@ struct FamilyManagementView: View {
         .sheet(isPresented: $showingShareSheet) {
             CloudFamilySharingSheet()
         }
+    }
+
+    private var hiddenMembers: [Member] {
+        familyStore.members.filter { familyStore.isMemberHidden($0.id) }
     }
 }
 
@@ -140,6 +153,45 @@ private struct MemberRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .sketchBorder(seed: member.id.uuidString.hashValue, padding: 0)
+    }
+}
+
+private struct HiddenMemberRow: View {
+    @Environment(\.theme) var theme
+    let member: Member
+    let onShow: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().fill(member.accentColor.opacity(0.18))
+                Circle().stroke(theme.palette.lineSoft, lineWidth: 1.5)
+                Text(member.initial)
+                    .font(theme.typography.font(.handTight, size: 16, weight: .bold))
+                    .foregroundColor(theme.palette.ink3)
+            }
+            .frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(member.name)
+                    .font(theme.typography.font(.handTight, size: 14, weight: .bold))
+                    .foregroundColor(theme.palette.ink2)
+                Text("Hidden from your list and map")
+                    .font(theme.typography.font(.handFlow, size: 12))
+                    .foregroundColor(theme.palette.ink3)
+            }
+            Spacer()
+            Button(action: onShow) {
+                Image(systemName: "eye")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.palette.ink)
+                    .frame(width: 36, height: 36)
+                    .sketchBorder(padding: 0)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Show \(member.displayName)")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
     }
 }
 

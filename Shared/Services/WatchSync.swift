@@ -53,6 +53,7 @@ final class WatchSync: NSObject, ObservableObject {
             "members": FamilyStore.shared.members.map(serialize(member:)),
             "devices": FamilyStore.shared.devices.map(serialize(device:)),
             "accountMemberId": FamilyStore.shared.account.memberId.uuidString,
+            "hiddenMemberIds": FamilyStore.shared.account.hiddenMemberIds.map { $0.uuidString },
             "themeId": ThemeManager.shared.theme.id,
             "guardiansSharing": Array(PresenceStore.shared.guardiansSharing.map { $0.uuidString }),
             "presence": serializePresence(),
@@ -280,6 +281,9 @@ final class WatchSync: NSObject, ObservableObject {
             // Preserve the local device entry if not in the iPhone's list.
             let merged = mergeDevices(incoming: devices)
             FamilyStore.shared.devices = merged
+        }
+        if let hiddenIds = payload["hiddenMemberIds"] as? [String] {
+            FamilyStore.shared.replaceHiddenMemberIds(hiddenIds.compactMap { UUID(uuidString: $0) })
         }
         if let presenceRaw = payload["presence"] as? [[String: Any]] {
             for entry in presenceRaw {

@@ -14,7 +14,9 @@ struct MemberDetailView: View {
     let memberId: UUID
     @State private var presentedRespond: AppNotification.RespondKind?
     @State private var showingWatchSheet = false
+    @State private var showingHideConfirm = false
     @ObservedObject private var watchStore = ContinuousWatchStore.shared
+    @Environment(\.dismiss) private var dismiss
 
     private var member: Member? { familyStore.member(memberId) }
     private var reading: LocationReading? { presenceStore.reading(for: memberId) }
@@ -64,6 +66,43 @@ struct MemberDetailView: View {
         .background(theme.palette.paper.ignoresSafeArea())
         .navigationTitle(member?.displayName ?? "Member")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let member, member.id != familyStore.account.memberId {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingHideConfirm = true
+                    } label: {
+                        Image(systemName: familyStore.isMemberHidden(member.id) ? "eye" : "eye.slash")
+                    }
+                    .accessibilityLabel(
+                        familyStore.isMemberHidden(member.id)
+                        ? "Show family member"
+                        : "Hide family member"
+                    )
+                }
+            }
+        }
+        .confirmationDialog(
+            "Hide this family member?",
+            isPresented: $showingHideConfirm,
+            titleVisibility: .visible
+        ) {
+            if let member {
+                if familyStore.isMemberHidden(member.id) {
+                    Button("Show \(member.displayName)") {
+                        familyStore.setMember(member.id, hidden: false)
+                    }
+                } else {
+                    Button("Hide \(member.displayName)", role: .destructive) {
+                        familyStore.setMember(member.id, hidden: true)
+                        dismiss()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This only changes what you see on this device. It does not remove them from the shared family.")
+        }
         .sheet(item: $presentedRespond) { kind in
             respondSheet(for: kind)
         }
