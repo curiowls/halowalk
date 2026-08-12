@@ -2,17 +2,79 @@ import SwiftUI
 import UIKit
 import CloudKit
 
-struct CloudFamilySharingSheet: UIViewControllerRepresentable {
+struct CloudFamilySharingSheet: View {
+    @Environment(\.theme) private var theme
     @Environment(\.dismiss) private var dismiss
+    @State private var preparedShare: PreparedShare?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let preparedShare {
+                CloudSharingController(preparedShare: preparedShare)
+                    .ignoresSafeArea()
+            } else {
+                VStack(spacing: 14) {
+                    if let errorMessage {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundColor(theme.palette.haloRed)
+                        Text("Could not prepare invite")
+                            .font(theme.typography.font(.handTight, size: 20, weight: .bold))
+                            .foregroundColor(theme.palette.ink)
+                        Text(errorMessage)
+                            .font(theme.typography.font(.handFlow, size: 13))
+                            .foregroundColor(theme.palette.ink3)
+                            .multilineTextAlignment(.center)
+                        Button("Close") { dismiss() }
+                            .font(theme.typography.font(.handTight, size: 15, weight: .bold))
+                            .buttonStyle(.plain)
+                            .padding(.top, 4)
+                    } else {
+                        ProgressView()
+                            .tint(theme.palette.ink)
+                        Text("Preparing family invite...")
+                            .font(theme.typography.font(.handTight, size: 17, weight: .bold))
+                            .foregroundColor(theme.palette.ink)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(theme.palette.paper.ignoresSafeArea())
+                .task { await prepareShare() }
+            }
+        }
+    }
+
+    private func prepareShare() async {
+        guard preparedShare == nil, errorMessage == nil else { return }
+        do {
+            let prepared = try await HaloCloudSync.shared.familyShareForPresentation()
+            preparedShare = PreparedShare(share: prepared.0, container: prepared.1)
+        } catch {
+            HaloCloudSync.shared.note("CloudFamilySharingSheet prepare failed: \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct PreparedShare {
+    let share: CKShare
+    let container: CKContainer
+}
+
+private struct CloudSharingController: UIViewControllerRepresentable {
+    let preparedShare: PreparedShare
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onDismiss: { dismiss() })
+        Coordinator()
     }
 
     func makeUIViewController(context: Context) -> UICloudSharingController {
-        let controller = UICloudSharingController { _, completion in
-            HaloCloudSync.shared.prepareFamilyShare(completion: completion)
-        }
+        let controller = UICloudSharingController(
+            share: preparedShare.share,
+            container: preparedShare.container
+        )
         controller.delegate = context.coordinator
         controller.availablePermissions = [.allowPrivate, .allowReadWrite]
         return controller
@@ -21,12 +83,6 @@ struct CloudFamilySharingSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UICloudSharingController, context: Context) {}
 
     final class Coordinator: NSObject, UICloudSharingControllerDelegate {
-        let onDismiss: () -> Void
-
-        init(onDismiss: @escaping () -> Void) {
-            self.onDismiss = onDismiss
-        }
-
         func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) {
             HaloCloudSync.shared.forceResync()
         }

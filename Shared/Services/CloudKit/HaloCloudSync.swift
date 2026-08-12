@@ -165,6 +165,12 @@ final class HaloCloudSync: ObservableObject {
     }
 
     #if os(iOS)
+    func familyShareForPresentation() async throws -> (CKShare, CKContainer) {
+        let share = try await loadOrCreateFamilyShare()
+        note("familyShareForPresentation: ready")
+        return (share, container)
+    }
+
     func prepareFamilyShare(
         completion: @escaping (CKShare?, CKContainer?, Error?) -> Void
     ) {
