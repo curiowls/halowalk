@@ -191,6 +191,38 @@ struct HaloWalkApp: App {
         ContinuousWatchStore.shared.start(watch)
         LiveTrackingActivityCoordinator.shared.refresh()
         LaunchLog.step("liveActivity.smoke.started \(watched.displayName)")
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            LiveTrackingActivityCoordinator.shared.refresh()
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            writeLiveActivitySmokeTestResult(watchedName: watched.displayName)
+        }
+    }
+
+    private func writeLiveActivitySmokeTestResult(watchedName: String) {
+        let diagnostics = LiveTrackingActivityCoordinator.shared.diagnostics
+        let payload: [String: Any] = [
+            "createdAt": ISO8601DateFormatter().string(from: Date()),
+            "watchedName": watchedName,
+            "activitiesEnabled": diagnostics.activitiesEnabled,
+            "activeWatchCount": diagnostics.activeWatchCount,
+            "systemActivityCount": diagnostics.systemActivityCount,
+            "lastStateSummary": diagnostics.lastStateSummary,
+            "lastUpdatedAt": diagnostics.lastUpdatedAt.map { ISO8601DateFormatter().string(from: $0) } ?? NSNull()
+        ]
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else {
+            LaunchLog.step("liveActivity.smoke.writeResult.failed")
+            return
+        }
+        do {
+            try data.write(to: documents.appendingPathComponent("halowalk-live-activity-smoke.json"))
+            LaunchLog.step("liveActivity.smoke.writeResult.complete")
+        } catch {
+            LaunchLog.step("liveActivity.smoke.writeResult.failed \(error.localizedDescription)")
+        }
     }
 #endif
 }

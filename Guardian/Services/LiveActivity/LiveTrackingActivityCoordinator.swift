@@ -72,6 +72,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
 
     private func reconcileActivities() async {
         let myId = FamilyStore.shared.account.memberId
+        ContinuousWatchStore.shared.tick()
         let active = ContinuousWatchStore.shared
             .watches(by: myId)
             .sorted { $0.startedAt > $1.startedAt }
@@ -79,6 +80,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
         let activitiesEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
 
         guard activitiesEnabled else {
+            await endActivities(excluding: [])
             lastStateSummary = active.isEmpty
                 ? "Live Activities disabled; no active watches"
                 : "Live Activities disabled for \(active.count) active watch session(s)"
@@ -87,18 +89,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
             return
         }
 
-        for activity in Activity<HaloWalkLiveActivityAttributes>.activities
-        where !activeIds.contains(activity.attributes.watchId) {
-            await activity.end(
-                ActivityContent(
-                    state: endedState(for: activity),
-                    staleDate: Date()
-                ),
-                dismissalPolicy: .after(Date().addingTimeInterval(60 * 5))
-            )
-            LaunchLog.step("liveActivity.end \(activity.attributes.watchedName)")
-            logger.notice("end \(activity.attributes.watchedName, privacy: .public)")
-        }
+        await endActivities(excluding: activeIds)
 
         for watch in active {
             guard let member = FamilyStore.shared.member(watch.watchedId) else { continue }
@@ -148,6 +139,21 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
             lastStateSummary = "No active watch sessions"
         }
         updateDiagnostics(activeWatchCount: active.count)
+    }
+
+    private func endActivities(excluding activeIds: Set<UUID>) async {
+        for activity in Activity<HaloWalkLiveActivityAttributes>.activities
+        where !activeIds.contains(activity.attributes.watchId) {
+            await activity.end(
+                ActivityContent(
+                    state: endedState(for: activity),
+                    staleDate: Date()
+                ),
+                dismissalPolicy: .immediate
+            )
+            LaunchLog.step("liveActivity.end \(activity.attributes.watchedName)")
+            logger.notice("end \(activity.attributes.watchedName, privacy: .public)")
+        }
     }
 
     private func updateDiagnostics(activeWatchCount: Int) {
