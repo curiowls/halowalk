@@ -126,10 +126,13 @@ final class HaloCloudSync: ObservableObject {
         Task {
             do {
                 try await accept(metadata)
+                let acceptedZoneID = try await acceptedFamilyZoneID(
+                    fallback: metadata.share.recordID.zoneID
+                )
                 await MainActor.run {
-                    self.configureSharedSession(zoneID: metadata.rootRecordID.zoneID)
+                    self.configureSharedSession(zoneID: acceptedZoneID)
                     self.restart()
-                    self.note("acceptShare: accepted zone=\(metadata.rootRecordID.zoneID.zoneName)/\(metadata.rootRecordID.zoneID.ownerName)")
+                    self.note("acceptShare: accepted zone=\(acceptedZoneID.zoneName)/\(acceptedZoneID.ownerName)")
                 }
             } catch {
                 await MainActor.run {
@@ -162,6 +165,11 @@ final class HaloCloudSync: ObservableObject {
             }
             return false
         }
+    }
+
+    private func acceptedFamilyZoneID(fallback: CKRecordZone.ID) async throws -> CKRecordZone.ID {
+        let zones = try await container.sharedCloudDatabase.allRecordZones()
+        return zones.map(\.zoneID).first(where: { $0.zoneName == CloudKitSchema.zoneName }) ?? fallback
     }
 
     #if os(iOS)
@@ -306,22 +314,41 @@ final class HaloCloudSync: ObservableObject {
         }
         CloudKitSchema.usePrivateZone()
         try await ensurePrivateFamilyZoneForSharing()
-        let root = try await fetchOrBuildFamilyRootRecord()
-        if let shareRef = root.share {
+
+        if let shareRef = try await existingZoneShareReference() {
             let share = try await fetchShare(recordID: shareRef.recordID)
             cache(share)
+            note("loadOrCreateFamilyShare: using existing zone-wide share")
             return share
         }
 
-        let share = CKShare(
-            rootRecord: root,
-            shareID: CloudKitSchema.shareRecordID(familyId: FamilyStore.shared.family.id)
+        // Zone-wide sharing is the right CloudKit shape for HaloWalk:
+        // members, hubs, relationships, devices, and readings all live
+        // together in one family zone and need to become visible together.
+        // Save the family root first so the accepted shared zone is never
+        // empty on the participant's first fetch.
+        let root = try await fetchOrBuildFamilyRootRecord()
+        let savedRoot = try await modify(
+            recordsToSave: [root],
+            recordIDsToDelete: nil,
+            database: container.privateCloudDatabase
         )
+        for record in savedRoot { cache(record) }
+
+        let share = CKShare(recordZoneID: CloudKitSchema.privateZoneID)
         share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
         share.publicPermission = .none
-        let saved = try await modify(recordsToSave: [root, share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
+        let saved = try await modify(recordsToSave: [share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
         for record in saved { cache(record) }
+        note("loadOrCreateFamilyShare: created zone-wide share")
         return saved.compactMap { $0 as? CKShare }.first ?? share
+    }
+
+    private func existingZoneShareReference() async throws -> CKRecord.Reference? {
+        let database = container.privateCloudDatabase
+        let zoneID = CloudKitSchema.privateZoneID
+        let zones = try await database.allRecordZones()
+        return zones.first(where: { $0.zoneID == zoneID })?.share
     }
 
     private func ensurePrivateFamilyZoneForSharing() async throws {
@@ -364,6 +391,9 @@ final class HaloCloudSync: ObservableObject {
             for key in fresh.allKeys() { record[key] = fresh[key] }
             return record
         } catch {
+            if let ck = error as? CKError, ck.code != .unknownItem {
+                throw error
+            }
             return CloudKitSchema.record(for: FamilyStore.shared.family)
         }
     }

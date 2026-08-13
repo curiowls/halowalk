@@ -59,7 +59,17 @@ struct CloudFamilySharingSheet: View {
 
     private func inviteErrorMessage(_ error: Error) -> String {
         guard let ck = error as? CKError else { return error.localizedDescription }
-        return "CloudKit \(ck.code.rawValue) (\(ck.code)): \(ck.localizedDescription)"
+        var lines = [
+            "CloudKit \(ck.code.rawValue) (\(ck.code)): \(ck.localizedDescription)"
+        ]
+        for (item, itemError) in (ck.partialErrorsByItemID ?? [:]).sorted(by: { "\($0.key)" < "\($1.key)" }) {
+            if let itemCK = itemError as? CKError {
+                lines.append("\(item): \(itemCK.code.rawValue) (\(itemCK.code)) \(itemCK.localizedDescription)")
+            } else {
+                lines.append("\(item): \(itemError.localizedDescription)")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
