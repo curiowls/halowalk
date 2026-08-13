@@ -13,7 +13,10 @@ struct HaloWalkLiveActivityWidgetBundle: WidgetBundle {
 struct HaloWalkLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: HaloWalkLiveActivityAttributes.self) { context in
-            HaloWalkLockScreenLiveActivityView(context: context)
+            HaloWalkLiveActivityLockScreenCard(
+                attributes: context.attributes,
+                state: context.state
+            )
                 .activityBackgroundTint(Color.white)
                 .activitySystemActionForegroundColor(Color.black)
         } dynamicIsland: { context in
@@ -64,46 +67,10 @@ private struct HaloWalkLockScreenLiveActivityView: View {
     let context: ActivityViewContext<HaloWalkLiveActivityAttributes>
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 10) {
-                IdentityView(context: context, compact: false)
-                Spacer()
-                StatePill(stateKind: context.state.stateKind)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(context.state.statusLine)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(.black)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                Text(context.state.locationLine)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.72))
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let progress = context.state.progress {
-                ProgressView(value: progress)
-                    .tint(haloAccentColor(context.attributes.accentHex))
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(detailLine(for: context.state))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.black.opacity(0.56))
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Text(context.state.conditionLine)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.black.opacity(0.56))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.84)
-            }
-        }
-        .padding(16)
-        .accessibilityElement(children: .combine)
+        HaloWalkLiveActivityLockScreenCard(
+            attributes: context.attributes,
+            state: context.state
+        )
     }
 }
 
@@ -217,78 +184,6 @@ private extension Color {
 }
 
 #if DEBUG
-extension HaloWalkLiveActivityAttributes {
-    fileprivate static var previewAndrew: HaloWalkLiveActivityAttributes {
-        HaloWalkLiveActivityAttributes(
-            watchId: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
-            watchedMemberId: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
-            watcherId: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
-            watchedName: "Andrew",
-            watchedInitial: "A",
-            accentHex: 0x11A36A,
-            startedAt: .now.addingTimeInterval(-8 * 60)
-        )
-    }
-}
-
-extension HaloWalkLiveActivityAttributes.ContentState {
-    fileprivate static var previewAtHub: HaloWalkLiveActivityAttributes.ContentState {
-        HaloWalkLiveActivityAttributes.ContentState(
-            statusLine: "Andrew is at Home",
-            locationLine: "Inside Home's halo",
-            freshnessLine: "now",
-            conditionLine: "until you stop",
-            accuracyLine: "65 ft",
-            stateKind: .atHub,
-            progress: nil,
-            updatedAt: .now,
-            endsAt: nil
-        )
-    }
-
-    fileprivate static var previewMoving: HaloWalkLiveActivityAttributes.ContentState {
-        HaloWalkLiveActivityAttributes.ContentState(
-            statusLine: "Andrew is moving",
-            locationLine: "0.4 mi from School",
-            freshnessLine: "2 min ago",
-            conditionLine: "for 18 min",
-            accuracyLine: "120 ft",
-            stateKind: .moving,
-            progress: 0.42,
-            updatedAt: .now,
-            endsAt: .now.addingTimeInterval(18 * 60)
-        )
-    }
-
-    fileprivate static var previewAway: HaloWalkLiveActivityAttributes.ContentState {
-        HaloWalkLiveActivityAttributes.ContentState(
-            statusLine: "Andrew is away",
-            locationLine: "1.2 mi from Home",
-            freshnessLine: "1 min ago",
-            conditionLine: "until Andrew arrives at Home",
-            accuracyLine: "95 ft",
-            stateKind: .away,
-            progress: nil,
-            updatedAt: .now,
-            endsAt: nil
-        )
-    }
-
-    fileprivate static var previewStale: HaloWalkLiveActivityAttributes.ContentState {
-        HaloWalkLiveActivityAttributes.ContentState(
-            statusLine: "Andrew was last seen",
-            locationLine: "Near Home",
-            freshnessLine: "14 min ago",
-            conditionLine: "Open HaloWalk for details",
-            accuracyLine: nil,
-            stateKind: .stale,
-            progress: nil,
-            updatedAt: .now.addingTimeInterval(-14 * 60),
-            endsAt: nil
-        )
-    }
-}
-
 #Preview("Live Watch", as: .content, using: HaloWalkLiveActivityAttributes.previewAndrew) {
     HaloWalkLiveActivityWidget()
 } contentStates: {

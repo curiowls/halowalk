@@ -65,6 +65,14 @@ struct MoreMenuSheet: View {
                         MenuRow(icon: "icloud", title: "CloudKit sync",
                                 subtitle: "Sync status & live event log")
                     }
+#if DEBUG
+                    NavigationLink {
+                        LiveActivityRenderPreviewView()
+                    } label: {
+                        MenuRow(icon: "waveform.path.ecg.rectangle", title: "Live Activity",
+                                subtitle: "Render states")
+                    }
+#endif
                     NavigationLink {
                         AboutView()
                     } label: {

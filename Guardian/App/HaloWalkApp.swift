@@ -47,19 +47,40 @@ struct HaloWalkApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                if onboardingComplete {
-                    if cloudSync.databaseScope == .sharedParticipant && !joinSetupComplete {
-                        FamilySharingJoinSetupView {
-                            joinSetupComplete = true
-                        }
-                    } else {
-                        RootTabView()
-                    }
-                } else {
-                    OnboardingFlow()
-                }
+            if isLiveActivityRenderPreview {
+                liveActivityRenderPreviewRoot
+            } else {
+                standardRoot
             }
+        }
+    }
+
+    private var isLiveActivityRenderPreview: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--halowalk-live-activity-render-preview")
+#else
+        false
+#endif
+    }
+
+    @ViewBuilder
+    private var liveActivityRenderPreviewRoot: some View {
+#if DEBUG
+        NavigationStack {
+            LiveActivityRenderPreviewView()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(themeManager.theme.palette.paper.ignoresSafeArea())
+        .environment(\.theme, themeManager.theme)
+        .preferredColorScheme(.light)
+        .textSelection(.enabled)
+#else
+        EmptyView()
+#endif
+    }
+
+    private var standardRoot: some View {
+        standardRootContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(themeManager.theme.palette.paper.ignoresSafeArea())
             .environmentObject(themeManager)
@@ -82,6 +103,20 @@ struct HaloWalkApp: App {
             .task {
                 await deferredActivations()
             }
+    }
+
+    @ViewBuilder
+    private var standardRootContent: some View {
+        if onboardingComplete {
+            if cloudSync.databaseScope == .sharedParticipant && !joinSetupComplete {
+                FamilySharingJoinSetupView {
+                    joinSetupComplete = true
+                }
+            } else {
+                RootTabView()
+            }
+        } else {
+            OnboardingFlow()
         }
     }
 
@@ -93,6 +128,12 @@ struct HaloWalkApp: App {
     /// breadcrumb + kill-switch so the user can disable any one of them if
     /// it turns out to be the freeze culprit.
     private func deferredActivations() async {
+#if DEBUG
+        guard !ProcessInfo.processInfo.arguments.contains("--halowalk-live-activity-render-preview") else {
+            LaunchLog.step("app.task.SKIPPED (live activity render preview)")
+            return
+        }
+#endif
         LaunchLog.step("app.task.begin")
         // Let SwiftUI render before any heavy work.
         try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s
