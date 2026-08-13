@@ -2,6 +2,7 @@ import ActivityKit
 import Combine
 import CoreLocation
 import Foundation
+import os
 
 @MainActor
 final class LiveTrackingActivityCoordinator: ObservableObject {
@@ -27,6 +28,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
 
     @Published private(set) var diagnostics = Diagnostics()
 
+    private let logger = Logger(subsystem: "com.halowalk.guardian", category: "LiveActivity")
     private var cancellables: Set<AnyCancellable> = []
     private var refreshTimer: Timer?
     private var started = false
@@ -80,6 +82,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
             lastStateSummary = active.isEmpty
                 ? "Live Activities disabled; no active watches"
                 : "Live Activities disabled for \(active.count) active watch session(s)"
+            logger.notice("\(self.lastStateSummary, privacy: .public)")
             updateDiagnostics(activeWatchCount: active.count)
             return
         }
@@ -94,6 +97,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
                 dismissalPolicy: .after(Date().addingTimeInterval(60 * 5))
             )
             LaunchLog.step("liveActivity.end \(activity.attributes.watchedName)")
+            logger.notice("end \(activity.attributes.watchedName, privacy: .public)")
         }
 
         for watch in active {
@@ -110,6 +114,7 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
                     )
                 )
                 LaunchLog.step("liveActivity.update \(member.displayName)")
+                logger.notice("update \(member.displayName, privacy: .public): \(state.statusLine, privacy: .public) | \(state.locationLine, privacy: .public)")
             } else {
                 let attributes = HaloWalkLiveActivityAttributes(
                     watchId: watch.id,
@@ -130,9 +135,11 @@ final class LiveTrackingActivityCoordinator: ObservableObject {
                         pushType: nil
                     )
                     LaunchLog.step("liveActivity.request \(member.displayName)")
+                    logger.notice("request \(member.displayName, privacy: .public): \(state.statusLine, privacy: .public) | \(state.locationLine, privacy: .public)")
                 } catch {
                     lastStateSummary = "Request failed: \(error.localizedDescription)"
                     LaunchLog.step("liveActivity.request.failed \(error.localizedDescription)")
+                    logger.error("request failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }

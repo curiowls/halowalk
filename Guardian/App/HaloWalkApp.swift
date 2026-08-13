@@ -147,6 +147,10 @@ struct HaloWalkApp: App {
             LiveTrackingActivityCoordinator.shared.start()
         }
 
+#if DEBUG
+        startLiveActivitySmokeTestIfRequested()
+#endif
+
         // Build B: CloudKit sync. Gated behind a kill-switch like the
         // other heavy subsystems — if CKSyncEngine ever hangs a launch
         // the user can disable it from Privacy & permissions and relaunch.
@@ -166,6 +170,29 @@ struct HaloWalkApp: App {
 
         LaunchLog.step("app.task.complete")
     }
+
+#if DEBUG
+    private func startLiveActivitySmokeTestIfRequested() {
+        guard ProcessInfo.processInfo.arguments.contains("--halowalk-live-activity-smoke-test") else {
+            return
+        }
+        let watcherId = familyStore.account.memberId
+        guard let watched = familyStore.watches(by: watcherId).first(where: { $0.id != watcherId }) else {
+            LaunchLog.step("liveActivity.smoke.noWatchedMember")
+            return
+        }
+        let watch = ContinuousWatch(
+            id: UUID(),
+            watcherId: watcherId,
+            watchedId: watched.id,
+            until: .forDuration(seconds: 2 * 60),
+            startedAt: Date()
+        )
+        ContinuousWatchStore.shared.start(watch)
+        LiveTrackingActivityCoordinator.shared.refresh()
+        LaunchLog.step("liveActivity.smoke.started \(watched.displayName)")
+    }
+#endif
 }
 
 final class HaloWalkAppDelegate: NSObject, UIApplicationDelegate {
