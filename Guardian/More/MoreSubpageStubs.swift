@@ -290,6 +290,7 @@ struct PrivacyPermissionsView: View {
     @ObservedObject private var notificationDelivery = NotificationDelivery.shared
     @ObservedObject private var presenceStore = PresenceStore.shared
     @ObservedObject private var familyStore = FamilyStore.shared
+    @ObservedObject private var liveActivity = LiveTrackingActivityCoordinator.shared
 
     // Pilot kill-switches — flipped via Diagnostics section.
     @AppStorage("halowalk.safe.locationStart") private var safeLocationStart = true
@@ -362,6 +363,31 @@ struct PrivacyPermissionsView: View {
                 Text("If the app freezes on launch, force-quit and toggle one of the kill switches off above, then relaunch. The launch log shows the last step before a freeze — share it to identify which subsystem is hanging.")
                     .font(theme.typography.font(.handFlow, size: 12))
             }
+
+            Section {
+                diagnosticsRow("Allowed", liveActivity.diagnostics.activitiesEnabled ? "yes" : "no")
+                diagnosticsRow("Active watches", "\(liveActivity.diagnostics.activeWatchCount)")
+                diagnosticsRow("System activities", "\(liveActivity.diagnostics.systemActivityCount)")
+                Text(liveActivity.diagnostics.lastStateSummary)
+                    .font(theme.typography.font(.handFlow, size: 12))
+                    .foregroundColor(theme.palette.ink3)
+                    .textSelection(.enabled)
+                Button {
+                    liveActivity.refresh()
+                } label: {
+                    Label("Refresh Live Activity status", systemImage: "arrow.clockwise")
+                }
+                Button {
+                    UIPasteboard.general.string = liveActivity.diagnostics.copyText
+                } label: {
+                    Label("Copy Live Activity status", systemImage: "doc.on.doc")
+                }
+            } header: {
+                Text("Live Activity diagnostics")
+            } footer: {
+                Text("Live Activities should appear only while you have an active Watch live session.")
+                    .font(theme.typography.font(.handFlow, size: 12))
+            }
         }
         .sheet(isPresented: $showingLog) {
             LaunchLogView()
@@ -371,6 +397,7 @@ struct PrivacyPermissionsView: View {
         .background(theme.palette.paper.ignoresSafeArea())
         .onAppear {
             notificationDelivery.refresh()
+            liveActivity.refresh()
         }
     }
 
@@ -409,6 +436,19 @@ struct PrivacyPermissionsView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(Capsule().fill(color))
+    }
+
+    private func diagnosticsRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+                .font(theme.typography.font(.handFlow, size: 13))
+                .foregroundColor(theme.palette.ink3)
+            Spacer()
+            Text(value)
+                .font(theme.typography.font(.handTight, size: 13, weight: .bold))
+                .foregroundColor(theme.palette.ink)
+                .textSelection(.enabled)
+        }
     }
 
     // MARK: Location

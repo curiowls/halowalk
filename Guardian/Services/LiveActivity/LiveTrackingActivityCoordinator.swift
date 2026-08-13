@@ -4,17 +4,37 @@ import CoreLocation
 import Foundation
 
 @MainActor
-final class LiveTrackingActivityCoordinator {
+final class LiveTrackingActivityCoordinator: ObservableObject {
     static let shared = LiveTrackingActivityCoordinator()
+
+    struct Diagnostics: Equatable {
+        var activitiesEnabled: Bool = false
+        var activeWatchCount: Int = 0
+        var systemActivityCount: Int = 0
+        var lastStateSummary: String = "Not started"
+        var lastUpdatedAt: Date?
+
+        var copyText: String {
+            [
+                "Live Activities enabled: \(activitiesEnabled ? "yes" : "no")",
+                "Active watch sessions: \(activeWatchCount)",
+                "System Live Activities: \(systemActivityCount)",
+                "Last state: \(lastStateSummary)",
+                "Last updated: \(lastUpdatedAt?.formatted(date: .abbreviated, time: .standard) ?? "never")"
+            ].joined(separator: "\n")
+        }
+    }
+
+    @Published private(set) var diagnostics = Diagnostics()
 
     private var cancellables: Set<AnyCancellable> = []
     private var refreshTimer: Timer?
     private var started = false
+    private var lastStateSummary = "Not started"
 
     private init() {}
 
     func start() {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         guard !started else {
             refresh()
             return
@@ -54,6 +74,15 @@ final class LiveTrackingActivityCoordinator {
             .watches(by: myId)
             .sorted { $0.startedAt > $1.startedAt }
         let activeIds = Set(active.map(\.id))
+        let activitiesEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
+
+        guard activitiesEnabled else {
+            lastStateSummary = active.isEmpty
+                ? "Live Activities disabled; no active watches"
+                : "Live Activities disabled for \(active.count) active watch session(s)"
+            updateDiagnostics(activeWatchCount: active.count)
+            return
+        }
 
         for activity in Activity<HaloWalkLiveActivityAttributes>.activities
         where !activeIds.contains(activity.attributes.watchId) {
@@ -64,11 +93,13 @@ final class LiveTrackingActivityCoordinator {
                 ),
                 dismissalPolicy: .after(Date().addingTimeInterval(60 * 5))
             )
+            LaunchLog.step("liveActivity.end \(activity.attributes.watchedName)")
         }
 
         for watch in active {
             guard let member = FamilyStore.shared.member(watch.watchedId) else { continue }
             let state = contentState(for: watch, member: member)
+            lastStateSummary = "\(member.displayName): \(state.statusLine) · \(state.locationLine)"
             if let activity = Activity<HaloWalkLiveActivityAttributes>.activities.first(where: {
                 $0.attributes.watchId == watch.id
             }) {
@@ -78,6 +109,7 @@ final class LiveTrackingActivityCoordinator {
                         staleDate: Date().addingTimeInterval(60 * 5)
                     )
                 )
+                LaunchLog.step("liveActivity.update \(member.displayName)")
             } else {
                 let attributes = HaloWalkLiveActivityAttributes(
                     watchId: watch.id,
@@ -97,11 +129,28 @@ final class LiveTrackingActivityCoordinator {
                         ),
                         pushType: nil
                     )
+                    LaunchLog.step("liveActivity.request \(member.displayName)")
                 } catch {
+                    lastStateSummary = "Request failed: \(error.localizedDescription)"
                     LaunchLog.step("liveActivity.request.failed \(error.localizedDescription)")
                 }
             }
         }
+
+        if active.isEmpty {
+            lastStateSummary = "No active watch sessions"
+        }
+        updateDiagnostics(activeWatchCount: active.count)
+    }
+
+    private func updateDiagnostics(activeWatchCount: Int) {
+        diagnostics = Diagnostics(
+            activitiesEnabled: ActivityAuthorizationInfo().areActivitiesEnabled,
+            activeWatchCount: activeWatchCount,
+            systemActivityCount: Activity<HaloWalkLiveActivityAttributes>.activities.count,
+            lastStateSummary: lastStateSummary,
+            lastUpdatedAt: Date()
+        )
     }
 
     private func endedState(
