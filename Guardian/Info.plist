@@ -28,6 +28,8 @@
 	<string>HaloWalk uses location in the background so guardians can see when a family member leaves a halo.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HaloWalk uses location to show hubs and halos relative to where family members are.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Kalam-Light.ttf</string>

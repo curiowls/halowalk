@@ -37,6 +37,7 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         CKSharingSupported: true
+        NSSupportsLiveActivities: true
         # Required for region monitoring to fire while the app is backgrounded.
         UIBackgroundModes:
           - location
@@ -78,6 +79,30 @@ targets:
         DEVELOPMENT_TEAM: 7JA4MHTFTW
     dependencies:
       - target: HaloWalk Watch App
+      - target: HaloWalk Live Activity
+        embed: true
+
+  HaloWalk Live Activity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Shared/LiveActivity
+      - LiveActivityWidget
+    info:
+      path: LiveActivityWidget/Info.plist
+      properties:
+        CFBundleDisplayName: HaloWalk Live Activity
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.halowalk.guardian.liveactivity
+        INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        TARGETED_DEVICE_FAMILY: "1"
+        DEVELOPMENT_TEAM: 7JA4MHTFTW
 
   HaloWalk Watch App:
     type: application

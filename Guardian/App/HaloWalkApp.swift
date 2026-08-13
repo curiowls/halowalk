@@ -140,9 +140,11 @@ struct HaloWalkApp: App {
             LaunchLog.step("wcsession.activate.begin")
             WatchSync.shared.activate()
             WatchSyncCoordinator.shared.start()
+            LiveTrackingActivityCoordinator.shared.start()
             LaunchLog.step("wcsession.activate.complete")
         } else {
             LaunchLog.step("wcsession.activate.SKIPPED (safe-mode flag off)")
+            LiveTrackingActivityCoordinator.shared.start()
         }
 
         // Build B: CloudKit sync. Gated behind a kill-switch like the
