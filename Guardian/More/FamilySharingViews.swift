@@ -25,11 +25,19 @@ struct CloudFamilySharingSheet: View {
                         Text(errorMessage)
                             .font(theme.typography.font(.handFlow, size: 13))
                             .foregroundColor(theme.palette.ink3)
-                            .multilineTextAlignment(.center)
-                        Button("Close") { dismiss() }
-                            .font(theme.typography.font(.handTight, size: 15, weight: .bold))
-                            .buttonStyle(.plain)
-                            .padding(.top, 4)
+                            .multilineTextAlignment(.leading)
+                            .textSelection(.enabled)
+                        HStack(spacing: 12) {
+                            Button {
+                                UIPasteboard.general.string = errorMessage
+                            } label: {
+                                Label("Copy error", systemImage: "doc.on.doc")
+                            }
+                            Button("Close") { dismiss() }
+                        }
+                        .font(theme.typography.font(.handTight, size: 15, weight: .bold))
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
                     } else {
                         ProgressView()
                             .tint(theme.palette.ink)

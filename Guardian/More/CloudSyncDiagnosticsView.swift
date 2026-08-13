@@ -97,6 +97,7 @@ struct CloudSyncDiagnosticsView: View {
                 Text("Last error: \(err)")
                     .font(theme.typography.font(.handFlow, size: 12))
                     .foregroundColor(theme.palette.haloRed)
+                    .textSelection(.enabled)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -73,6 +73,7 @@ struct HaloWalkApp: App {
             .environmentObject(cloudSync)
             .environment(\.theme, themeManager.theme)
             .preferredColorScheme(.light)
+            .textSelection(.enabled)
             .onReceive(cloudSync.$discoveredSharedFamilyOnLaunch) { discovered in
                 guard discovered else { return }
                 joinSetupComplete = false
