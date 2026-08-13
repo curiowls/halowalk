@@ -315,8 +315,8 @@ final class HaloCloudSync: ObservableObject {
         CloudKitSchema.usePrivateZone()
         try await ensurePrivateFamilyZoneForSharing()
 
-        if let shareRef = try await existingZoneShareReference() {
-            let share = try await fetchShare(recordID: shareRef.recordID)
+        if try await existingZoneShareReference() != nil {
+            let share = try await fetchZoneShare()
             cache(share)
             note("loadOrCreateFamilyShare: using existing zone-wide share")
             return share
@@ -341,7 +341,12 @@ final class HaloCloudSync: ObservableObject {
         let saved = try await modify(recordsToSave: [share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
         for record in saved { cache(record) }
         note("loadOrCreateFamilyShare: created zone-wide share")
-        return saved.compactMap { $0 as? CKShare }.first ?? share
+        let savedShare = saved.compactMap { $0 as? CKShare }.first ?? share
+        if savedShare.url == nil {
+            note("loadOrCreateFamilyShare: saved share missing URL; refetching")
+            return try await fetchZoneShare()
+        }
+        return savedShare
     }
 
     private func existingZoneShareReference() async throws -> CKRecord.Reference? {
@@ -410,6 +415,14 @@ final class HaloCloudSync: ObservableObject {
         return share
     }
 
+    private func fetchZoneShare() async throws -> CKShare {
+        let id = CKRecord.ID(
+            recordName: CKRecordNameZoneWideShare,
+            zoneID: CloudKitSchema.privateZoneID
+        )
+        return try await fetchShare(recordID: id)
+    }
+
     private func modify(
         recordsToSave: [CKRecord]?,
         recordIDsToDelete: [CKRecord.ID]?,
@@ -418,10 +431,18 @@ final class HaloCloudSync: ObservableObject {
         try await withCheckedThrowingContinuation { continuation in
             let op = CKModifyRecordsOperation(recordsToSave: recordsToSave, recordIDsToDelete: recordIDsToDelete)
             op.savePolicy = .changedKeys
+            var savedRecordsByID: [CKRecord.ID: CKRecord] = [:]
+            op.perRecordSaveBlock = { recordID, result in
+                if case .success(let record) = result {
+                    savedRecordsByID[recordID] = record
+                }
+            }
             op.modifyRecordsResultBlock = { result in
                 switch result {
                 case .success:
-                    continuation.resume(returning: recordsToSave ?? [])
+                    let requestedIDs = recordsToSave?.map(\.recordID) ?? []
+                    let savedRecords = requestedIDs.compactMap { savedRecordsByID[$0] }
+                    continuation.resume(returning: savedRecords)
                 case .failure(let error):
                     continuation.resume(throwing: error)
                 }
