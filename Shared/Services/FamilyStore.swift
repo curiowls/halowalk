@@ -221,6 +221,13 @@ final class FamilyStore: ObservableObject {
 
     // MARK: - Mutations
 
+    func renameFamily(to rawName: String) {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != family.name else { return }
+        family.name = String(name.prefix(60))
+        save()
+    }
+
     func updateMember(_ member: Member) {
         if let i = members.firstIndex(where: { $0.id == member.id }) {
             members[i] = member

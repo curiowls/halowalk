@@ -7,12 +7,29 @@ struct FamilyManagementView: View {
     @EnvironmentObject var familyStore: FamilyStore
     @ObservedObject private var cloudSync = HaloCloudSync.shared
     @State private var showingShareSheet = false
+    @State private var showingRenameSheet = false
+    @State private var familyNameDraft = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text(familyStore.family.name)
-                    .font(theme.typography.font(.handTight, size: 22, weight: .bold))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(familyStore.family.name)
+                        .font(theme.typography.font(.handTight, size: 22, weight: .bold))
+                    Button {
+                        familyNameDraft = familyStore.family.name
+                        showingRenameSheet = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.palette.ink2)
+                            .frame(width: 30, height: 30)
+                            .sketchBorder(padding: 0)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit group name")
+                    Spacer(minLength: 0)
+                }
                 Text("\(familyStore.watcherMembers.count) guardian\(familyStore.watcherMembers.count == 1 ? "" : "s") · \(familyStore.watchedMembers.count) wearer\(familyStore.watchedMembers.count == 1 ? "" : "s")")
                     .font(theme.typography.font(.handFlow, size: 13))
                     .foregroundColor(theme.palette.ink3)
@@ -89,6 +106,15 @@ struct FamilyManagementView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingShareSheet) {
             CloudFamilySharingSheet()
+        }
+        .alert("Edit group name", isPresented: $showingRenameSheet) {
+            TextField("Group name", text: $familyNameDraft)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                familyStore.renameFamily(to: familyNameDraft)
+            }
+        } message: {
+            Text("This is the shared name people see for this HaloWalk group.")
         }
     }
 
