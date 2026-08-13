@@ -53,8 +53,13 @@ struct CloudFamilySharingSheet: View {
             preparedShare = PreparedShare(share: prepared.0, container: prepared.1)
         } catch {
             HaloCloudSync.shared.note("CloudFamilySharingSheet prepare failed: \(error.localizedDescription)")
-            errorMessage = error.localizedDescription
+            errorMessage = inviteErrorMessage(error)
         }
+    }
+
+    private func inviteErrorMessage(_ error: Error) -> String {
+        guard let ck = error as? CKError else { return error.localizedDescription }
+        return "CloudKit \(ck.code.rawValue) (\(ck.code)): \(ck.localizedDescription)"
     }
 }
 

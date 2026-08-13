@@ -304,6 +304,8 @@ final class HaloCloudSync: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "Only the family owner can manage the share."]
             )
         }
+        CloudKitSchema.usePrivateZone()
+        try await ensurePrivateFamilyZoneForSharing()
         let root = try await fetchOrBuildFamilyRootRecord()
         if let shareRef = root.share {
             let share = try await fetchShare(recordID: shareRef.recordID)
@@ -320,6 +322,32 @@ final class HaloCloudSync: ObservableObject {
         let saved = try await modify(recordsToSave: [root, share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
         for record in saved { cache(record) }
         return saved.compactMap { $0 as? CKShare }.first ?? share
+    }
+
+    private func ensurePrivateFamilyZoneForSharing() async throws {
+        let database = container.privateCloudDatabase
+        let zoneID = CloudKitSchema.privateZoneID
+        let zones = try await database.allRecordZones()
+        if zones.contains(where: { $0.zoneID == zoneID }) {
+            note("share zone exists: \(zoneID.zoneName)")
+            return
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let op = CKModifyRecordZonesOperation(
+                recordZonesToSave: [CKRecordZone(zoneID: zoneID)],
+                recordZoneIDsToDelete: nil
+            )
+            op.modifyRecordZonesResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            database.add(op)
+        }
+        note("share zone created: \(zoneID.zoneName)")
     }
 
     private func fetchOrBuildFamilyRootRecord() async throws -> CKRecord {
