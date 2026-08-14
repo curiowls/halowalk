@@ -23,6 +23,12 @@ struct MoreMenuSheet: View {
                         MenuRow(icon: "person.2.fill", title: "Family members",
                                 subtitle: "Add, edit, assign roles")
                     }
+                    NavigationLink {
+                        GroupWalksView()
+                    } label: {
+                        MenuRow(icon: "figure.walk.motion", title: "Group walks",
+                                subtitle: "Meet up and share location temporarily")
+                    }
                 }
                 Section("Behavior") {
                     NavigationLink {

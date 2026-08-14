@@ -48,6 +48,9 @@ final class LocationFidelityCoordinator: ObservableObject {
         ContinuousWatchStore.shared.$incomingBoosts
             .sink { [weak self] _ in self?.recompute() }
             .store(in: &cancellables)
+        WalkSessionStore.shared.$sessions
+            .sink { [weak self] _ in self?.recompute() }
+            .store(in: &cancellables)
         // Quiet-hours window crosses time boundaries, so re-evaluate
         // every minute. Cheap.
         quietRecheckTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -91,6 +94,7 @@ final class LocationFidelityCoordinator: ObservableObject {
         // intent that overrides quiet hours.
         let myWatches = ContinuousWatchStore.shared.watches(by: myMemberId)
         let hasActiveOutgoingWatch = !myWatches.isEmpty
+        let hasActiveGroupWalk = WalkSessionStore.shared.isMemberInActiveWalk(myMemberId)
 
         // Highest incoming boost targeting this user (i.e. someone else
         // is asking us to broadcast more frequently).
@@ -114,6 +118,13 @@ final class LocationFidelityCoordinator: ObservableObject {
             desired = max(desired, .foregroundCoarse)
         }
 
+        // Active group walks are also explicit, time-bound intent. A
+        // participant should publish fresh enough location for the group
+        // only while that walk session is active.
+        if hasActiveGroupWalk {
+            desired = max(desired, .foregroundCoarse)
+        }
+
         // Incoming boost from a paired device.
         desired = max(desired, incomingFidelity)
 
@@ -122,6 +133,7 @@ final class LocationFidelityCoordinator: ObservableObject {
         // reflect a real "I need to know" signal).
         if inQuiet, prefs.pauseNonEssentialLocation,
            !hasActiveOutgoingWatch,
+           !hasActiveGroupWalk,
            incomingFidelity == .background {
             desired = min(desired, .background)
         }
@@ -146,7 +158,12 @@ final class LocationFidelityCoordinator: ObservableObject {
         let myId = FamilyStore.shared.account.memberId
         // Members this user is currently watching (the "interesting set").
         let watched = FamilyStore.shared.watches(by: myId).map(\.id)
-        guard !watched.isEmpty else {
+        let activeWalkParticipants = WalkSessionStore.shared
+            .activeSessions(for: myId)
+            .flatMap(\.participantIds)
+            .filter { $0 != myId }
+        let boostMemberIds = Array(Set(watched + activeWalkParticipants))
+        guard !boostMemberIds.isEmpty else {
             // No one to boost. Cancel any prior boost.
             if lastBroadcastBoost != .background {
                 WatchSync.shared.sendBoostCancel()
@@ -158,7 +175,9 @@ final class LocationFidelityCoordinator: ObservableObject {
         // Decide what to ask paired devices for.
         let needed: LocationFidelity = {
             if fineScreenBoostCount > 0 { return .foregroundFine }
-            if coarseScreenBoostCount > 0 || !ContinuousWatchStore.shared.watches(by: myId).isEmpty {
+            if coarseScreenBoostCount > 0 ||
+                !ContinuousWatchStore.shared.watches(by: myId).isEmpty ||
+                !WalkSessionStore.shared.activeSessions(for: myId).isEmpty {
                 return .foregroundCoarse
             }
             return .background
@@ -178,7 +197,7 @@ final class LocationFidelityCoordinator: ObservableObject {
         guard levelChanged || elapsed > 240 else { return }
 
         WatchSync.shared.sendBoostRequest(
-            forMemberIds: watched,
+            forMemberIds: boostMemberIds,
             fidelity: needed,
             ttl: 5 * 60
         )
@@ -186,4 +205,3 @@ final class LocationFidelityCoordinator: ObservableObject {
         lastBoostSentAt = now
     }
 }
-
