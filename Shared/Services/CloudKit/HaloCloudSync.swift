@@ -326,7 +326,7 @@ final class HaloCloudSync: ObservableObject {
                 root = try await saveRootAndFamilyGraphForSharing(root)
                 cache(share)
                 note("loadOrCreateFamilyShare: using existing family root share")
-                return share
+                return try await shareReadyForPresentation(share)
             } catch {
                 if isUnknownItem(error) {
                     note("loadOrCreateFamilyShare: stale family root share reference; rebuilding private share zone")
@@ -373,7 +373,17 @@ final class HaloCloudSync: ObservableObject {
         if recreatedPrivateZone {
             scheduleRestartAfterShareRepair()
         }
-        return savedShare
+        return try await shareReadyForPresentation(savedShare)
+    }
+
+    private func shareReadyForPresentation(_ share: CKShare) async throws -> CKShare {
+        guard share.url == nil else { return share }
+        note("loadOrCreateFamilyShare: family root share missing URL; refetching before presentation")
+        let fetched = try await retryCloudKitBusy("refetch family root share URL") {
+            try await fetchShare(recordID: share.recordID)
+        }
+        cache(fetched)
+        return fetched
     }
 
     private func existingZoneShareReference() async throws -> CKRecord.Reference? {
