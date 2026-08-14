@@ -215,6 +215,7 @@ final class HaloCloudSync: ObservableObject {
     /// seed clobbers the user's real cloud data — the avatar-not-staying
     /// bug from Build 30.
     private var fetchedAnyRecords = false
+    private var skipNextPrivateZoneSave = false
 
     private let privateStateKey = "halowalk.cksync.state.v1"
     private let sharedStateKey = "halowalk.cksync.shared.state.v1"
@@ -326,7 +327,9 @@ final class HaloCloudSync: ObservableObject {
             } catch {
                 if isUnknownItem(error) {
                     note("loadOrCreateFamilyShare: stale zone share reference; rebuilding private share zone")
-                    try await recreatePrivateFamilyZoneForSharing()
+                    try await retryCloudKitBusy("rebuild stale share zone") {
+                        try await recreatePrivateFamilyZoneForSharing()
+                    }
                     recreatedPrivateZone = true
                 } else {
                     throw error
@@ -340,28 +343,36 @@ final class HaloCloudSync: ObservableObject {
         // Save the family root first so the accepted shared zone is never
         // empty on the participant's first fetch.
         if recreatedPrivateZone {
-            try await saveLocalStateIntoFreshPrivateZone()
+            try await retryCloudKitBusy("save repaired share-zone data") {
+                try await saveLocalStateIntoFreshPrivateZone()
+            }
         } else {
             let root = try await fetchOrBuildFamilyRootRecord()
-            let savedRoot = try await modify(
-                recordsToSave: [root],
-                recordIDsToDelete: nil,
-                database: container.privateCloudDatabase
-            )
+            let savedRoot = try await retryCloudKitBusy("save family root before sharing") {
+                try await modify(
+                    recordsToSave: [root],
+                    recordIDsToDelete: nil,
+                    database: container.privateCloudDatabase
+                )
+            }
             for record in savedRoot { cache(record) }
         }
 
         let share = CKShare(recordZoneID: CloudKitSchema.privateZoneID)
         share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
         share.publicPermission = .none
-        let saved = try await modify(recordsToSave: [share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
+        let saved = try await retryCloudKitBusy("save family share") {
+            try await modify(recordsToSave: [share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
+        }
         for record in saved { cache(record) }
         note("loadOrCreateFamilyShare: created zone-wide share")
         let savedShare = saved.compactMap { $0 as? CKShare }.first ?? share
         if savedShare.url == nil {
             note("loadOrCreateFamilyShare: saved share missing URL; refetching zone share")
             do {
-                return try await fetchZoneShare()
+                return try await retryCloudKitBusy("refetch saved family share") {
+                    try await fetchZoneShare()
+                }
             } catch {
                 if hadExistingShareReference, isUnknownItem(error) {
                     note("loadOrCreateFamilyShare: replacement share refetch hit stale share again: \(cloudKitErrorSummary(error))")
@@ -371,8 +382,7 @@ final class HaloCloudSync: ObservableObject {
             }
         }
         if recreatedPrivateZone {
-            restart()
-            note("loadOrCreateFamilyShare: restarted sync after share-zone rebuild")
+            scheduleRestartAfterShareRepair()
         }
         return savedShare
     }
@@ -421,7 +431,9 @@ final class HaloCloudSync: ObservableObject {
         removeCachedSystemFields(in: zoneID)
 
         do {
-            try await deletePrivateFamilyZone()
+            try await retryCloudKitBusy("delete stale private zone") {
+                try await deletePrivateFamilyZone()
+            }
             note("share zone repair: deleted stale private zone")
         } catch {
             if isUnknownItem(error) {
@@ -431,7 +443,9 @@ final class HaloCloudSync: ObservableObject {
             }
         }
 
-        try await createPrivateFamilyZone()
+        try await retryCloudKitBusy("create repaired private zone") {
+            try await createPrivateFamilyZone()
+        }
         note("share zone repair: recreated private zone")
     }
 
@@ -476,12 +490,27 @@ final class HaloCloudSync: ObservableObject {
         note("share zone repair: saving \(records.count) local record(s) into fresh zone")
         for start in stride(from: 0, to: records.count, by: 200) {
             let end = min(start + 200, records.count)
-            let saved = try await modify(
-                recordsToSave: Array(records[start..<end]),
-                recordIDsToDelete: nil,
-                database: container.privateCloudDatabase
-            )
+            let saved = try await retryCloudKitBusy("save repaired record batch") {
+                try await modify(
+                    recordsToSave: Array(records[start..<end]),
+                    recordIDsToDelete: nil,
+                    database: container.privateCloudDatabase
+                )
+            }
             for record in saved { cache(record) }
+        }
+    }
+
+    private func scheduleRestartAfterShareRepair() {
+        note("loadOrCreateFamilyShare: scheduling sync restart after share-zone rebuild")
+        Task {
+            try? await Task.sleep(nanoseconds: 12_000_000_000)
+            await MainActor.run {
+                guard self.engine == nil else { return }
+                self.skipNextPrivateZoneSave = true
+                self.restart()
+                self.note("loadOrCreateFamilyShare: restarted sync after share-zone rebuild")
+            }
         }
     }
 
@@ -556,6 +585,69 @@ final class HaloCloudSync: ObservableObject {
         }
         let partials = ns.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error]
         return partials?.values.contains(where: isUnknownItem) ?? false
+    }
+
+    private func isTransientCloudKitBusy(_ error: Error) -> Bool {
+        if let ck = error as? CKError {
+            switch ck.code {
+            case .zoneBusy, .serviceUnavailable, .requestRateLimited, .networkUnavailable, .networkFailure:
+                return true
+            default:
+                if ck.partialErrorsByItemID?.values.contains(where: isTransientCloudKitBusy) == true {
+                    return true
+                }
+            }
+        }
+        let ns = error as NSError
+        if ns.domain == CKError.errorDomain {
+            let transientCodes = [
+                CKError.Code.zoneBusy.rawValue,
+                CKError.Code.serviceUnavailable.rawValue,
+                CKError.Code.requestRateLimited.rawValue,
+                CKError.Code.networkUnavailable.rawValue,
+                CKError.Code.networkFailure.rawValue
+            ]
+            if transientCodes.contains(ns.code) { return true }
+        }
+        let partials = ns.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error]
+        return partials?.values.contains(where: isTransientCloudKitBusy) ?? false
+    }
+
+    private func retryAfterSeconds(from error: Error) -> Double? {
+        if let ck = error as? CKError, let retry = ck.retryAfterSeconds {
+            return retry
+        }
+        let ns = error as NSError
+        if let retry = ns.userInfo[CKErrorRetryAfterKey] as? Double {
+            return retry
+        }
+        if let retry = ns.userInfo[CKErrorRetryAfterKey] as? NSNumber {
+            return retry.doubleValue
+        }
+        return nil
+    }
+
+    private func retryCloudKitBusy<T>(
+        _ label: String,
+        maxAttempts: Int = 6,
+        operation: () async throws -> T
+    ) async throws -> T {
+        var attempt = 1
+        while true {
+            do {
+                return try await operation()
+            } catch {
+                guard attempt < maxAttempts, isTransientCloudKitBusy(error) else {
+                    throw error
+                }
+                let requestedDelay = retryAfterSeconds(from: error)
+                let fallbackDelay = min(pow(2.0, Double(attempt - 1)), 8.0)
+                let delay = max(requestedDelay ?? fallbackDelay, 1.0)
+                note("\(label): CloudKit busy; retry \(attempt + 1)/\(maxAttempts) in \(String(format: "%.1f", delay))s — \(cloudKitErrorSummary(error))")
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                attempt += 1
+            }
+        }
     }
 
     private func cloudKitErrorSummary(_ error: Error) -> String {
@@ -687,9 +779,14 @@ final class HaloCloudSync: ObservableObject {
         // Participants receive the already-created shared zone after
         // accepting the CKShare; saving the zone in shared DB is invalid.
         if databaseScope == .privateOwner {
-            self.engine?.state.add(pendingDatabaseChanges: [
-                .saveZone(CKRecordZone(zoneID: CloudKitSchema.zoneID))
-            ])
+            if skipNextPrivateZoneSave {
+                skipNextPrivateZoneSave = false
+                note("bootEngine: skipped private zone save after share repair")
+            } else {
+                self.engine?.state.add(pendingDatabaseChanges: [
+                    .saveZone(CKRecordZone(zoneID: CloudKitSchema.zoneID))
+                ])
+            }
         }
     }
 
