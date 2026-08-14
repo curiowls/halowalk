@@ -316,10 +316,18 @@ final class HaloCloudSync: ObservableObject {
         try await ensurePrivateFamilyZoneForSharing()
 
         if try await existingZoneShareReference() != nil {
-            let share = try await fetchZoneShare()
-            cache(share)
-            note("loadOrCreateFamilyShare: using existing zone-wide share")
-            return share
+            do {
+                let share = try await fetchZoneShare()
+                cache(share)
+                note("loadOrCreateFamilyShare: using existing zone-wide share")
+                return share
+            } catch {
+                if isUnknownItem(error) {
+                    note("loadOrCreateFamilyShare: stale zone share reference; creating replacement")
+                } else {
+                    throw error
+                }
+            }
         }
 
         // Zone-wide sharing is the right CloudKit shape for HaloWalk:
@@ -421,6 +429,14 @@ final class HaloCloudSync: ObservableObject {
             zoneID: CloudKitSchema.privateZoneID
         )
         return try await fetchShare(recordID: id)
+    }
+
+    private func isUnknownItem(_ error: Error) -> Bool {
+        guard let ck = error as? CKError else { return false }
+        if ck.code == .unknownItem { return true }
+        return ck.partialErrorsByItemID?.values.contains { itemError in
+            (itemError as? CKError)?.code == .unknownItem
+        } ?? false
     }
 
     private func modify(
