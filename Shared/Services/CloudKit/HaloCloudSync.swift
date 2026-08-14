@@ -315,7 +315,8 @@ final class HaloCloudSync: ObservableObject {
         CloudKitSchema.usePrivateZone()
         try await ensurePrivateFamilyZoneForSharing()
 
-        if try await existingZoneShareReference() != nil {
+        let hadExistingShareReference = try await existingZoneShareReference() != nil
+        if hadExistingShareReference {
             do {
                 let share = try await fetchZoneShare()
                 cache(share)
@@ -351,8 +352,16 @@ final class HaloCloudSync: ObservableObject {
         note("loadOrCreateFamilyShare: created zone-wide share")
         let savedShare = saved.compactMap { $0 as? CKShare }.first ?? share
         if savedShare.url == nil {
-            note("loadOrCreateFamilyShare: saved share missing URL; refetching")
-            return try await fetchZoneShare()
+            note("loadOrCreateFamilyShare: saved share missing URL; refetching zone share")
+            do {
+                return try await fetchZoneShare()
+            } catch {
+                if hadExistingShareReference, isUnknownItem(error) {
+                    note("loadOrCreateFamilyShare: replacement share refetch hit stale share again: \(cloudKitErrorSummary(error))")
+                    return savedShare
+                }
+                throw error
+            }
         }
         return savedShare
     }
@@ -432,11 +441,26 @@ final class HaloCloudSync: ObservableObject {
     }
 
     private func isUnknownItem(_ error: Error) -> Bool {
-        guard let ck = error as? CKError else { return false }
-        if ck.code == .unknownItem { return true }
-        return ck.partialErrorsByItemID?.values.contains { itemError in
-            (itemError as? CKError)?.code == .unknownItem
-        } ?? false
+        if let ck = error as? CKError {
+            if ck.code == .unknownItem { return true }
+            if ck.partialErrorsByItemID?.values.contains(where: isUnknownItem) == true {
+                return true
+            }
+        }
+        let ns = error as NSError
+        if ns.domain == CKError.errorDomain && ns.code == CKError.Code.unknownItem.rawValue {
+            return true
+        }
+        let partials = ns.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error]
+        return partials?.values.contains(where: isUnknownItem) ?? false
+    }
+
+    private func cloudKitErrorSummary(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == CKError.errorDomain {
+            return "CloudKit \(ns.code): \(ns.localizedDescription)"
+        }
+        return error.localizedDescription
     }
 
     private func modify(
