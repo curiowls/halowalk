@@ -316,18 +316,21 @@ final class HaloCloudSync: ObservableObject {
         CloudKitSchema.usePrivateZone()
         try await ensurePrivateFamilyZoneForSharing()
 
-        let hadExistingShareReference = try await existingZoneShareReference() != nil
         var recreatedPrivateZone = false
-        if hadExistingShareReference {
+        var root = try await fetchOrBuildFamilyRootRecord()
+        if let existingShareReference = root.share {
             do {
-                let share = try await fetchZoneShare()
+                let share = try await retryCloudKitBusy("fetch existing family root share") {
+                    try await fetchShare(recordID: existingShareReference.recordID)
+                }
+                cache(root)
                 cache(share)
-                note("loadOrCreateFamilyShare: using existing zone-wide share")
+                note("loadOrCreateFamilyShare: using existing family root share")
                 return share
             } catch {
                 if isUnknownItem(error) {
-                    note("loadOrCreateFamilyShare: stale zone share reference; rebuilding private share zone")
-                    try await retryCloudKitBusy("rebuild stale share zone") {
+                    note("loadOrCreateFamilyShare: stale family root share reference; rebuilding private share zone")
+                    try await retryCloudKitBusy("rebuild stale family root share") {
                         try await recreatePrivateFamilyZoneForSharing()
                     }
                     recreatedPrivateZone = true
@@ -337,17 +340,24 @@ final class HaloCloudSync: ObservableObject {
             }
         }
 
-        // Zone-wide sharing is the right CloudKit shape for HaloWalk:
-        // members, hubs, relationships, devices, and readings all live
-        // together in one family zone and need to become visible together.
-        // Save the family root first so the accepted shared zone is never
-        // empty on the participant's first fetch.
+        if !recreatedPrivateZone, try await existingZoneShareReference() != nil {
+            note("loadOrCreateFamilyShare: legacy zone-wide share reference found; rebuilding as family root share")
+            try await retryCloudKitBusy("replace legacy zone-wide share") {
+                try await recreatePrivateFamilyZoneForSharing()
+            }
+            recreatedPrivateZone = true
+        }
+
+        // The Family record is the share root. Every other HaloWalk
+        // record is parented under it, so CloudKit shares the whole
+        // family graph without depending on the brittle zone-wide
+        // cloudkit.zoneshare record.
         if recreatedPrivateZone {
             try await retryCloudKitBusy("save repaired share-zone data") {
                 try await saveLocalStateIntoFreshPrivateZone()
             }
+            root = try await fetchOrBuildFamilyRootRecord()
         } else {
-            let root = try await fetchOrBuildFamilyRootRecord()
             let savedRoot = try await retryCloudKitBusy("save family root before sharing") {
                 try await modify(
                     recordsToSave: [root],
@@ -356,31 +366,20 @@ final class HaloCloudSync: ObservableObject {
                 )
             }
             for record in savedRoot { cache(record) }
+            if let serverRoot = savedRoot.first(where: { $0.recordID == root.recordID }) {
+                root = serverRoot
+            }
         }
 
-        let share = CKShare(recordZoneID: CloudKitSchema.privateZoneID)
+        let share = CKShare(rootRecord: root)
         share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
         share.publicPermission = .none
         let saved = try await retryCloudKitBusy("save family share") {
-            try await modify(recordsToSave: [share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
+            try await modify(recordsToSave: [root, share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
         }
         for record in saved { cache(record) }
-        note("loadOrCreateFamilyShare: created zone-wide share")
+        note("loadOrCreateFamilyShare: created family root share")
         let savedShare = saved.compactMap { $0 as? CKShare }.first ?? share
-        if savedShare.url == nil {
-            note("loadOrCreateFamilyShare: saved share missing URL; refetching zone share")
-            do {
-                return try await retryCloudKitBusy("refetch saved family share") {
-                    try await fetchZoneShare()
-                }
-            } catch {
-                if hadExistingShareReference, isUnknownItem(error) {
-                    note("loadOrCreateFamilyShare: replacement share refetch hit stale share again: \(cloudKitErrorSummary(error))")
-                    return savedShare
-                }
-                throw error
-            }
-        }
         if recreatedPrivateZone {
             scheduleRestartAfterShareRepair()
         }
@@ -528,7 +527,7 @@ final class HaloCloudSync: ObservableObject {
                 return CloudKitSchema.record(for: reading)
             }
         }
-        return records
+        return records.map(recordWithFamilyRootParentIfNeeded)
     }
 
     private func fetchOrBuildFamilyRootRecord() async throws -> CKRecord {
@@ -562,14 +561,6 @@ final class HaloCloudSync: ObservableObject {
             )
         }
         return share
-    }
-
-    private func fetchZoneShare() async throws -> CKShare {
-        let id = CKRecord.ID(
-            recordName: CKRecordNameZoneWideShare,
-            zoneID: CloudKitSchema.privateZoneID
-        )
-        return try await fetchShare(recordID: id)
     }
 
     private func isUnknownItem(_ error: Error) -> Bool {
@@ -686,6 +677,15 @@ final class HaloCloudSync: ObservableObject {
         }
     }
     #endif
+
+    private func recordWithFamilyRootParentIfNeeded(_ record: CKRecord) -> CKRecord {
+        guard record.recordType != CloudKitSchema.RecordType.family else { return record }
+        record.parent = CKRecord.Reference(
+            recordID: CloudKitSchema.familyRecordID(FamilyStore.shared.family.id),
+            action: .none
+        )
+        return record
+    }
 
     // MARK: - Lifecycle
 
@@ -882,6 +882,7 @@ final class HaloCloudSync: ObservableObject {
         for key in fresh.allKeys() {
             base[key] = fresh[key]
         }
+        _ = recordWithFamilyRootParentIfNeeded(base)
         if recordID.recordName.hasPrefix("member_") {
             note("materialize \(recordID.recordName): avatar=\(fresh["avatarId"] as? String ?? "nil") tag=\(cached?.recordChangeTag ?? "none")")
         }
