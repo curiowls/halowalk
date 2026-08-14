@@ -323,7 +323,7 @@ final class HaloCloudSync: ObservableObject {
                 let share = try await retryCloudKitBusy("fetch existing family root share") {
                     try await fetchShare(recordID: existingShareReference.recordID)
                 }
-                cache(root)
+                root = try await saveRootAndFamilyGraphForSharing(root)
                 cache(share)
                 note("loadOrCreateFamilyShare: using existing family root share")
                 return share
@@ -358,17 +358,7 @@ final class HaloCloudSync: ObservableObject {
             }
             root = try await fetchOrBuildFamilyRootRecord()
         } else {
-            let savedRoot = try await retryCloudKitBusy("save family root before sharing") {
-                try await modify(
-                    recordsToSave: [root],
-                    recordIDsToDelete: nil,
-                    database: container.privateCloudDatabase
-                )
-            }
-            for record in savedRoot { cache(record) }
-            if let serverRoot = savedRoot.first(where: { $0.recordID == root.recordID }) {
-                root = serverRoot
-            }
+            root = try await saveRootAndFamilyGraphForSharing(root)
         }
 
         let share = CKShare(rootRecord: root)
@@ -528,6 +518,80 @@ final class HaloCloudSync: ObservableObject {
             }
         }
         return records.map(recordWithFamilyRootParentIfNeeded)
+    }
+
+    private func saveRootAndFamilyGraphForSharing(_ root: CKRecord) async throws -> CKRecord {
+        var currentRoot = root
+        let savedRoot = try await retryCloudKitBusy("save family root before sharing") {
+            try await modify(
+                recordsToSave: [currentRoot],
+                recordIDsToDelete: nil,
+                database: container.privateCloudDatabase
+            )
+        }
+        for record in savedRoot { cache(record) }
+        if let serverRoot = savedRoot.first(where: { $0.recordID == currentRoot.recordID }) {
+            currentRoot = serverRoot
+        }
+        try await saveFamilyGraphRecordsForSharing()
+        return currentRoot
+    }
+
+    private func saveFamilyGraphRecordsForSharing() async throws {
+        let records = try await shareGraphRecords()
+        guard !records.isEmpty else { return }
+        note("loadOrCreateFamilyShare: saving \(records.count) child record(s) under family root")
+        for start in stride(from: 0, to: records.count, by: 200) {
+            let end = min(start + 200, records.count)
+            let saved = try await retryCloudKitBusy("save family share child records") {
+                try await modify(
+                    recordsToSave: Array(records[start..<end]),
+                    recordIDsToDelete: nil,
+                    database: container.privateCloudDatabase
+                )
+            }
+            for record in saved { cache(record) }
+        }
+    }
+
+    private func shareGraphRecords() async throws -> [CKRecord] {
+        var recordIDs: [CKRecord.ID] = []
+        recordIDs += FamilyStore.shared.members.map { CloudKitSchema.memberRecordID($0.id) }
+        recordIDs += FamilyStore.shared.relationships.map { CloudKitSchema.relationshipRecordID($0.id) }
+        recordIDs += FamilyStore.shared.devices.map { CloudKitSchema.deviceRecordID($0.id) }
+        recordIDs += HubStore.shared.hubs.map { CloudKitSchema.hubRecordID($0.id) }
+        for (memberId, byDevice) in PresenceStore.shared.readings {
+            guard FamilyStore.shared.member(memberId)?.sharesLocation != false else { continue }
+            recordIDs += byDevice.keys.map {
+                CloudKitSchema.readingRecordID(memberId: memberId, deviceId: $0)
+            }
+        }
+        var records: [CKRecord] = []
+        for id in recordIDs {
+            if let record = try await fetchOrBuildShareGraphRecord(id) {
+                records.append(record)
+            }
+        }
+        return records
+    }
+
+    private func fetchOrBuildShareGraphRecord(_ recordID: CKRecord.ID) async throws -> CKRecord? {
+        guard let fresh = freshRecord(recordID) else { return nil }
+        if let cached = cachedBaseRecord(for: recordID) {
+            for key in fresh.allKeys() { cached[key] = fresh[key] }
+            return recordWithFamilyRootParentIfNeeded(cached)
+        }
+        do {
+            let record = try await container.privateCloudDatabase.record(for: recordID)
+            cache(record)
+            for key in fresh.allKeys() { record[key] = fresh[key] }
+            return recordWithFamilyRootParentIfNeeded(record)
+        } catch {
+            if isUnknownItem(error) {
+                return recordWithFamilyRootParentIfNeeded(fresh)
+            }
+            throw error
+        }
     }
 
     private func fetchOrBuildFamilyRootRecord() async throws -> CKRecord {
