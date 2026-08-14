@@ -316,6 +316,7 @@ final class HaloCloudSync: ObservableObject {
         try await ensurePrivateFamilyZoneForSharing()
 
         let hadExistingShareReference = try await existingZoneShareReference() != nil
+        var recreatedPrivateZone = false
         if hadExistingShareReference {
             do {
                 let share = try await fetchZoneShare()
@@ -324,7 +325,9 @@ final class HaloCloudSync: ObservableObject {
                 return share
             } catch {
                 if isUnknownItem(error) {
-                    note("loadOrCreateFamilyShare: stale zone share reference; creating replacement")
+                    note("loadOrCreateFamilyShare: stale zone share reference; rebuilding private share zone")
+                    try await recreatePrivateFamilyZoneForSharing()
+                    recreatedPrivateZone = true
                 } else {
                     throw error
                 }
@@ -336,13 +339,17 @@ final class HaloCloudSync: ObservableObject {
         // together in one family zone and need to become visible together.
         // Save the family root first so the accepted shared zone is never
         // empty on the participant's first fetch.
-        let root = try await fetchOrBuildFamilyRootRecord()
-        let savedRoot = try await modify(
-            recordsToSave: [root],
-            recordIDsToDelete: nil,
-            database: container.privateCloudDatabase
-        )
-        for record in savedRoot { cache(record) }
+        if recreatedPrivateZone {
+            try await saveLocalStateIntoFreshPrivateZone()
+        } else {
+            let root = try await fetchOrBuildFamilyRootRecord()
+            let savedRoot = try await modify(
+                recordsToSave: [root],
+                recordIDsToDelete: nil,
+                database: container.privateCloudDatabase
+            )
+            for record in savedRoot { cache(record) }
+        }
 
         let share = CKShare(recordZoneID: CloudKitSchema.privateZoneID)
         share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
@@ -362,6 +369,10 @@ final class HaloCloudSync: ObservableObject {
                 }
                 throw error
             }
+        }
+        if recreatedPrivateZone {
+            restart()
+            note("loadOrCreateFamilyShare: restarted sync after share-zone rebuild")
         }
         return savedShare
     }
@@ -397,6 +408,98 @@ final class HaloCloudSync: ObservableObject {
             database.add(op)
         }
         note("share zone created: \(zoneID.zoneName)")
+    }
+
+    private func recreatePrivateFamilyZoneForSharing() async throws {
+        let zoneID = CloudKitSchema.privateZoneID
+        note("share zone repair: stopping sync and deleting \(zoneID.zoneName)")
+        cancellables.removeAll()
+        engine = nil
+        isRunning = false
+        fetchedAnyRecords = false
+        UserDefaults.standard.removeObject(forKey: privateStateKey)
+        removeCachedSystemFields(in: zoneID)
+
+        do {
+            try await deletePrivateFamilyZone()
+            note("share zone repair: deleted stale private zone")
+        } catch {
+            if isUnknownItem(error) {
+                note("share zone repair: private zone already gone")
+            } else {
+                throw error
+            }
+        }
+
+        try await createPrivateFamilyZone()
+        note("share zone repair: recreated private zone")
+    }
+
+    private func deletePrivateFamilyZone() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let op = CKModifyRecordZonesOperation(
+                recordZonesToSave: nil,
+                recordZoneIDsToDelete: [CloudKitSchema.privateZoneID]
+            )
+            op.modifyRecordZonesResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            container.privateCloudDatabase.add(op)
+        }
+    }
+
+    private func createPrivateFamilyZone() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let op = CKModifyRecordZonesOperation(
+                recordZonesToSave: [CKRecordZone(zoneID: CloudKitSchema.privateZoneID)],
+                recordZoneIDsToDelete: nil
+            )
+            op.modifyRecordZonesResultBlock = { result in
+                switch result {
+                case .success:
+                    continuation.resume()
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+            container.privateCloudDatabase.add(op)
+        }
+    }
+
+    private func saveLocalStateIntoFreshPrivateZone() async throws {
+        let records = localRecordsForFreshPrivateZone()
+        note("share zone repair: saving \(records.count) local record(s) into fresh zone")
+        for start in stride(from: 0, to: records.count, by: 200) {
+            let end = min(start + 200, records.count)
+            let saved = try await modify(
+                recordsToSave: Array(records[start..<end]),
+                recordIDsToDelete: nil,
+                database: container.privateCloudDatabase
+            )
+            for record in saved { cache(record) }
+        }
+    }
+
+    private func localRecordsForFreshPrivateZone() -> [CKRecord] {
+        var records: [CKRecord] = [CloudKitSchema.record(for: FamilyStore.shared.family)]
+        records += FamilyStore.shared.members.map { CloudKitSchema.record(for: $0) }
+        records += FamilyStore.shared.relationships.map { CloudKitSchema.record(for: $0) }
+        records += FamilyStore.shared.devices.map { CloudKitSchema.record(for: $0) }
+        records += HubStore.shared.hubs.map { CloudKitSchema.record(for: $0) }
+        records += PresenceStore.shared.readings.values.flatMap { readingsByDevice in
+            readingsByDevice.values.compactMap { reading in
+                guard FamilyStore.shared.member(reading.memberId)?.sharesLocation != false else {
+                    return nil
+                }
+                return CloudKitSchema.record(for: reading)
+            }
+        }
+        return records
     }
 
     private func fetchOrBuildFamilyRootRecord() async throws -> CKRecord {
@@ -756,6 +859,11 @@ final class HaloCloudSync: ObservableObject {
         record.encodeSystemFields(with: coder)
         coder.finishEncoding()
         systemFields[systemFieldKey(for: record.recordID)] = coder.encodedData
+        saveSystemFields()
+    }
+    private func removeCachedSystemFields(in zoneID: CKRecordZone.ID) {
+        let prefix = "\(zoneID.ownerName)|\(zoneID.zoneName)|"
+        systemFields = systemFields.filter { !$0.key.hasPrefix(prefix) }
         saveSystemFields()
     }
     private func cachedBaseRecord(for recordID: CKRecord.ID) -> CKRecord? {
