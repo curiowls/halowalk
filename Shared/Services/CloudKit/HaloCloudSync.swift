@@ -412,11 +412,23 @@ final class HaloCloudSync: ObservableObject {
         share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
         share.publicPermission = .none
         let saved = try await retryCloudKitBusy("save family share") {
-            try await modify(recordsToSave: [root, share], recordIDsToDelete: nil, database: container.privateCloudDatabase)
+            try await modify(
+                recordsToSave: [root, share],
+                recordIDsToDelete: nil,
+                database: container.privateCloudDatabase,
+                savePolicy: .allKeys,
+                isAtomic: true
+            )
         }
         for record in saved { cache(record) }
-        note("loadOrCreateFamilyShare: created family root share")
-        let savedShare = saved.compactMap { $0 as? CKShare }.first ?? share
+        guard let savedShare = saved.compactMap({ $0 as? CKShare }).first else {
+            throw NSError(
+                domain: "HaloWalk.CloudSharing",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "CloudKit did not return the saved family share record."]
+            )
+        }
+        note("loadOrCreateFamilyShare: created family root share \(savedShare.recordID.recordName)")
         if recreatedPrivateZone {
             scheduleRestartAfterShareRepair()
         }
@@ -800,22 +812,49 @@ final class HaloCloudSync: ObservableObject {
     private func modify(
         recordsToSave: [CKRecord]?,
         recordIDsToDelete: [CKRecord.ID]?,
-        database: CKDatabase
+        database: CKDatabase,
+        savePolicy: CKModifyRecordsOperation.RecordSavePolicy = .changedKeys,
+        isAtomic: Bool = false
     ) async throws -> [CKRecord] {
         try await withCheckedThrowingContinuation { continuation in
             let op = CKModifyRecordsOperation(recordsToSave: recordsToSave, recordIDsToDelete: recordIDsToDelete)
-            op.savePolicy = .changedKeys
+            op.savePolicy = savePolicy
+            op.isAtomic = isAtomic
             var savedRecordsByID: [CKRecord.ID: CKRecord] = [:]
+            var saveErrorsByID: [CKRecord.ID: Error] = [:]
             op.perRecordSaveBlock = { recordID, result in
-                if case .success(let record) = result {
+                switch result {
+                case .success(let record):
                     savedRecordsByID[recordID] = record
+                case .failure(let error):
+                    saveErrorsByID[recordID] = error
                 }
             }
             op.modifyRecordsResultBlock = { result in
                 switch result {
                 case .success:
+                    if !saveErrorsByID.isEmpty {
+                        let error = CKError(
+                            .partialFailure,
+                            userInfo: [CKPartialErrorsByItemIDKey: saveErrorsByID]
+                        )
+                        continuation.resume(throwing: error)
+                        return
+                    }
                     let requestedIDs = recordsToSave?.map(\.recordID) ?? []
                     let savedRecords = requestedIDs.compactMap { savedRecordsByID[$0] }
+                    if savedRecords.count != requestedIDs.count {
+                        let missingNames = requestedIDs
+                            .filter { savedRecordsByID[$0] == nil }
+                            .map(\.recordName)
+                            .joined(separator: ", ")
+                        continuation.resume(throwing: NSError(
+                            domain: "HaloWalk.CloudSharing",
+                            code: 4,
+                            userInfo: [NSLocalizedDescriptionKey: "CloudKit did not confirm saved record(s): \(missingNames)"]
+                        ))
+                        return
+                    }
                     continuation.resume(returning: savedRecords)
                 case .failure(let error):
                     continuation.resume(throwing: error)
