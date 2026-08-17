@@ -405,7 +405,10 @@ final class HaloCloudSync: ObservableObject {
             root = try await saveRootAndFamilyGraphForSharing(root)
         }
 
-        let share = CKShare(rootRecord: root)
+        let share = CKShare(
+            rootRecord: root,
+            shareID: CloudKitSchema.shareRecordID(familyId: FamilyStore.shared.family.id)
+        )
         share[CKShare.SystemFieldKey.title] = FamilyStore.shared.family.name as CKRecordValue
         share.publicPermission = .none
         let saved = try await retryCloudKitBusy("save family share") {
@@ -423,7 +426,7 @@ final class HaloCloudSync: ObservableObject {
     private func shareReadyForPresentation(_ share: CKShare) async throws -> CKShare {
         guard share.url == nil else { return share }
         note("loadOrCreateFamilyShare: family root share missing URL; refetching before presentation")
-        let fetched = try await retryCloudKitBusy("refetch family root share URL") {
+        let fetched = try await retryCloudKitNotFound("refetch family root share URL") {
             try await fetchShare(recordID: share.recordID)
         }
         cache(fetched)
@@ -757,6 +760,29 @@ final class HaloCloudSync: ObservableObject {
                 let fallbackDelay = min(pow(2.0, Double(attempt - 1)), 8.0)
                 let delay = max(requestedDelay ?? fallbackDelay, 1.0)
                 note("\(label): CloudKit busy; retry \(attempt + 1)/\(maxAttempts) in \(String(format: "%.1f", delay))s — \(cloudKitErrorSummary(error))")
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                attempt += 1
+            }
+        }
+    }
+
+    private func retryCloudKitNotFound<T>(
+        _ label: String,
+        maxAttempts: Int = 6,
+        operation: () async throws -> T
+    ) async throws -> T {
+        var attempt = 1
+        while true {
+            do {
+                return try await operation()
+            } catch {
+                guard attempt < maxAttempts, isUnknownItem(error) || isTransientCloudKitBusy(error) else {
+                    throw error
+                }
+                let requestedDelay = retryAfterSeconds(from: error)
+                let fallbackDelay = min(1.0 + Double(attempt - 1) * 0.75, 4.0)
+                let delay = max(requestedDelay ?? fallbackDelay, 1.0)
+                note("\(label): CloudKit record unavailable; retry \(attempt + 1)/\(maxAttempts) in \(String(format: "%.1f", delay))s — \(cloudKitErrorSummary(error))")
                 try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 attempt += 1
             }
