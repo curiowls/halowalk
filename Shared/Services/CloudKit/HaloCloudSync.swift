@@ -174,7 +174,7 @@ final class HaloCloudSync: ObservableObject {
 
     #if os(iOS)
     func familyShareForPresentation() async throws -> (CKShare, CKContainer) {
-        let share = try await loadOrCreateFamilyShare()
+        let share = try await loadOrCreateFamilyShareRepairingStaleStateIfNeeded()
         note("familyShareForPresentation: ready")
         return (share, container)
     }
@@ -184,7 +184,7 @@ final class HaloCloudSync: ObservableObject {
     ) {
         Task {
             do {
-                let share = try await self.loadOrCreateFamilyShare()
+                let share = try await self.loadOrCreateFamilyShareRepairingStaleStateIfNeeded()
                 await MainActor.run {
                     self.note("prepareFamilyShare: ready")
                     completion(share, self.container, nil)
@@ -305,6 +305,23 @@ final class HaloCloudSync: ObservableObject {
     }
 
     #if os(iOS)
+    private func loadOrCreateFamilyShareRepairingStaleStateIfNeeded() async throws -> CKShare {
+        do {
+            return try await loadOrCreateFamilyShare()
+        } catch {
+            guard isUnknownItem(error) else { throw error }
+            note("loadOrCreateFamilyShare: CloudKit reported a missing share record; rebuilding private share state")
+            try await retryCloudKitBusy("rebuild missing family share") {
+                try await recreatePrivateFamilyZoneForSharing()
+            }
+            try await retryCloudKitBusy("save repaired missing-share data") {
+                try await saveLocalStateIntoFreshPrivateZone()
+            }
+            scheduleRestartAfterShareRepair()
+            return try await loadOrCreateFamilyShare()
+        }
+    }
+
     private func loadOrCreateFamilyShare() async throws -> CKShare {
         guard databaseScope == .privateOwner else {
             throw NSError(
@@ -319,31 +336,58 @@ final class HaloCloudSync: ObservableObject {
         var recreatedPrivateZone = false
         var root = try await fetchOrBuildFamilyRootRecord()
         if let existingShareReference = root.share {
-            do {
-                let share = try await retryCloudKitBusy("fetch existing family root share") {
-                    try await fetchShare(recordID: existingShareReference.recordID)
+            if isZoneWideShareReference(existingShareReference) {
+                note("loadOrCreateFamilyShare: stale zone-wide family share reference; rebuilding private share zone")
+                try await retryCloudKitBusy("rebuild stale zone-wide family share") {
+                    try await recreatePrivateFamilyZoneForSharing()
                 }
-                root = try await saveRootAndFamilyGraphForSharing(root)
-                cache(share)
-                note("loadOrCreateFamilyShare: using existing family root share")
-                return try await shareReadyForPresentation(share)
-            } catch {
-                if isUnknownItem(error) {
-                    note("loadOrCreateFamilyShare: stale family root share reference; rebuilding private share zone")
-                    try await retryCloudKitBusy("rebuild stale family root share") {
-                        try await recreatePrivateFamilyZoneForSharing()
+                recreatedPrivateZone = true
+            } else {
+                do {
+                    let share = try await retryCloudKitBusy("fetch existing family root share") {
+                        try await fetchShare(recordID: existingShareReference.recordID)
                     }
-                    recreatedPrivateZone = true
-                } else {
-                    throw error
+                    root = try await saveRootAndFamilyGraphForSharing(root)
+                    cache(share)
+                    note("loadOrCreateFamilyShare: using existing family root share")
+                    return try await shareReadyForPresentation(share)
+                } catch {
+                    if isUnknownItem(error) {
+                        note("loadOrCreateFamilyShare: stale family root share reference; rebuilding private share zone")
+                        try await retryCloudKitBusy("rebuild stale family root share") {
+                            try await recreatePrivateFamilyZoneForSharing()
+                        }
+                        recreatedPrivateZone = true
+                    } else {
+                        throw error
+                    }
                 }
             }
         }
 
-        if !recreatedPrivateZone, try await existingZoneShareReference() != nil {
+        if !recreatedPrivateZone, let legacyShareReference = try await existingZoneShareReference() {
             note("loadOrCreateFamilyShare: legacy zone-wide share reference found; rebuilding as family root share")
-            try await retryCloudKitBusy("replace legacy zone-wide share") {
-                try await recreatePrivateFamilyZoneForSharing()
+            if isZoneWideShareReference(legacyShareReference) {
+                try await retryCloudKitBusy("replace legacy zone-wide share") {
+                    try await recreatePrivateFamilyZoneForSharing()
+                }
+            } else {
+                do {
+                    _ = try await retryCloudKitBusy("verify existing zone share") {
+                        try await fetchShare(recordID: legacyShareReference.recordID)
+                    }
+                    try await retryCloudKitBusy("rebuild stale family root share") {
+                        try await recreatePrivateFamilyZoneForSharing()
+                    }
+                } catch {
+                    if isUnknownItem(error) {
+                        try await retryCloudKitBusy("replace missing legacy zone share") {
+                            try await recreatePrivateFamilyZoneForSharing()
+                        }
+                    } else {
+                        throw error
+                    }
+                }
             }
             recreatedPrivateZone = true
         }
@@ -384,6 +428,10 @@ final class HaloCloudSync: ObservableObject {
         }
         cache(fetched)
         return fetched
+    }
+
+    private func isZoneWideShareReference(_ reference: CKRecord.Reference) -> Bool {
+        reference.recordID.recordName == "cloudkit.zoneshare"
     }
 
     private func existingZoneShareReference() async throws -> CKRecord.Reference? {
