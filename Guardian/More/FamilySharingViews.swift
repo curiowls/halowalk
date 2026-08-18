@@ -70,6 +70,12 @@ struct CloudFamilySharingSheet: View {
         var lines = [
             "CloudKit \(ck.code.rawValue) (\(ck.code)): \(ck.localizedDescription)"
         ]
+        if productionSchemaMissingField(in: ck) {
+            lines.append("")
+            lines.append("This TestFlight build is writing a field that is missing from the Production CloudKit schema. Deploy the Development schema for iCloud.com.halowalk.guardian to Production in CloudKit Console, then retry the invite. Expected Member fields include appleUserId and locationSharingEnabled.")
+            lines.append("")
+            lines.append("Raw CloudKit details:")
+        }
         for (item, itemError) in (ck.partialErrorsByItemID ?? [:]).sorted(by: { "\($0.key)" < "\($1.key)" }) {
             if let itemCK = itemError as? CKError {
                 lines.append("\(item): \(itemCK.code.rawValue) (\(itemCK.code)) \(itemCK.localizedDescription)")
@@ -78,6 +84,16 @@ struct CloudFamilySharingSheet: View {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func productionSchemaMissingField(in error: CKError) -> Bool {
+        let partialErrors = error.partialErrorsByItemID?.values.map { $0 } ?? []
+        let errors: [Error] = partialErrors + [error]
+        return errors.contains { itemError in
+            let message = itemError.localizedDescription.lowercased()
+            return message.contains("production schema") &&
+                message.contains("cannot create or modify field")
+        }
     }
 }
 

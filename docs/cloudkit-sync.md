@@ -153,6 +153,25 @@ If Device B still only sees mock members after accepting:
 - Reopen the original invite link. Share acceptance is what moves Device B into the owner's shared CloudKit zone; Apple Family Sharing membership alone does not.
 - After Device B has accepted once, delete and reinstall HaloWalk on Device B. On launch, HaloWalk should rediscover the accepted shared zone, show **Join family**, and return to the same shared family after setup.
 
+### Invite fails before the share sheet appears
+
+If TestFlight shows:
+
+```text
+Cannot create or modify field 'locationSharingEnabled' in record 'Member' in production schema
+```
+
+the app is reaching the invite preparation save, but Production CloudKit is rejecting the `Member` records before the `CKShare` can be created. This is a schema deployment issue, not an Apple Family Sharing detection issue and not a family/group name issue.
+
+Fix:
+
+1. CloudKit Console → `iCloud.com.halowalk.guardian` → Development → Schema.
+2. Verify `Member` includes `appleUserId` and `locationSharingEnabled`.
+3. CloudKit Console → **Deploy Schema Changes** → review → **Deploy** to Production.
+4. Retry the same TestFlight build. A new app build is not required for this specific error.
+
+Earlier invite builds could report downstream `CKError 11` share-record-not-found errors because the app did not always surface per-record save failures from `CKModifyRecordsOperation`. Build 55 and newer validate per-record save results, so schema mismatches should appear directly.
+
 ---
 
 ## What's deferred
