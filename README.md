@@ -130,3 +130,5 @@ inform the eventual default.
 - CloudKit owner solo sync and Build C family sharing use the
   `iCloud.com.halowalk.guardian` container. TestFlight requires Development
   schema changes to be deployed to Production after any schema change.
+  Run `Scripts/preflight-testflight.sh` before upload; it verifies or requires
+  explicit confirmation that Production includes the required sharing fields.
