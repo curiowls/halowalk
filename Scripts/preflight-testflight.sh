@@ -26,32 +26,41 @@ if [[ "${HALOWALK_CLOUDKIT_SCHEMA_DEPLOYED:-}" == "1" ]]; then
   exit 0
 fi
 
-if [[ -n "${CKTOOL_TOKEN:-}" ]]; then
-  if ! command -v xcrun >/dev/null 2>&1; then
-    echo "ERROR: xcrun is not available, cannot run cktool schema check."
-    exit 1
-  fi
+if command -v xcrun >/dev/null 2>&1; then
   TMP_SCHEMA="$(mktemp -t halowalk-production-schema.XXXXXX)"
   trap 'rm -f "${TMP_SCHEMA}"' EXIT
 
   echo "Checking Production CloudKit schema with cktool..."
-  xcrun cktool export-schema \
-    --token "${CKTOOL_TOKEN}" \
-    --team-id "${TEAM_ID}" \
-    --container-id "${CONTAINER_ID}" \
-    --environment production \
-    --output-file "${TMP_SCHEMA}" >/dev/null
+  if [[ -n "${CKTOOL_TOKEN:-}" ]]; then
+    EXPORT_RESULT=0
+    xcrun cktool export-schema \
+      --token "${CKTOOL_TOKEN}" \
+      --team-id "${TEAM_ID}" \
+      --container-id "${CONTAINER_ID}" \
+      --environment production \
+      --output-file "${TMP_SCHEMA}" >/dev/null 2>&1 || EXPORT_RESULT=$?
+  else
+    EXPORT_RESULT=0
+    xcrun cktool export-schema \
+      --team-id "${TEAM_ID}" \
+      --container-id "${CONTAINER_ID}" \
+      --environment production \
+      --output-file "${TMP_SCHEMA}" >/dev/null 2>&1 || EXPORT_RESULT=$?
+  fi
+  if [[ "${EXPORT_RESULT}" -eq 0 ]]; then
+    for FIELD in "${REQUIRED_FIELDS[@]}"; do
+      if ! rg -q "${FIELD}" "${TMP_SCHEMA}"; then
+        echo "ERROR: Production CloudKit schema is missing Member.${FIELD}."
+        echo "Deploy Development schema changes to Production in CloudKit Console before uploading."
+        exit 1
+      fi
+    done
 
-  for FIELD in "${REQUIRED_FIELDS[@]}"; do
-    if ! rg -q "${FIELD}" "${TMP_SCHEMA}"; then
-      echo "ERROR: Production CloudKit schema is missing Member.${FIELD}."
-      echo "Deploy Development schema changes to Production in CloudKit Console before uploading."
-      exit 1
-    fi
-  done
+    echo "Production CloudKit schema contains required Build C Member fields."
+    exit 0
+  fi
 
-  echo "Production CloudKit schema contains required Build C Member fields."
-  exit 0
+  echo "cktool could not verify Production schema automatically."
 fi
 
 cat <<'MESSAGE'
